@@ -6,12 +6,14 @@ interface HunterRosterDrawerProps {
   hunters: Hunter[];
   selectedHunterId: string | null;
   onSelectHunter: (hunter: Hunter) => void;
+  partyLeaderIds?: Set<string>;
 }
 
 export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
   hunters,
   selectedHunterId,
-  onSelectHunter
+  onSelectHunter,
+  partyLeaderIds
 }) => {
   const [isOpen, setIsOpen] = React.useState(true);
 
@@ -121,6 +123,11 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                       <span className={`text-[10px] font-medium truncate ${action.color}`}>
                         {action.text}
                       </span>
+                      {hunter.partyId && (
+                        <span className="text-[10px] font-medium text-indigo-300 shrink-0" title={partyLeaderIds?.has(hunter.id) ? 'Party leader' : 'In a field party'}>
+                          👥{partyLeaderIds?.has(hunter.id) ? ' ♛' : ''}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -10,13 +10,17 @@ interface HeroInspectorProps {
   onClose: () => void;
   isFollowing: boolean;
   onToggleFollow: () => void;
+  partyMembers?: Hunter[];
+  isPartyLeader?: boolean;
 }
 
 export const HeroInspector: React.FC<HeroInspectorProps> = ({
   hunter,
   onClose,
   isFollowing,
-  onToggleFollow
+  onToggleFollow,
+  partyMembers,
+  isPartyLeader
 }) => {
   const getRarityBadge = (rarity: HunterRarity) => {
     switch (rarity) {
@@ -203,12 +207,25 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
           </div>
         </div>
 
+        {/* Field Party (compact fellow-member line) */}
+        {hunter.partyId && (
+          <div className="p-2.5 rounded-xl bg-indigo-950/50 border border-indigo-500/30 text-[11px]">
+            <span className="font-bold text-indigo-300">
+              👥 Party ({(partyMembers?.length ?? 0) + 1}) {isPartyLeader ? '♛ leading' : 'member'}
+            </span>
+            {(partyMembers?.length ?? 0) > 0 && (
+              <span className="text-slate-300 font-mono">
+                {' — '}{partyMembers!.map(m => `${m.name.split(' ')[0]} Lv.${m.level}`).join(' · ')}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Combat Attributes Grid */}
         <div>
           <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
             <Swords className="w-3.5 h-3.5 text-amber-400" /> Combat Attributes
-          </h3>
-          <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+          </h3>          <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
             <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700/60 flex justify-between items-center">
               <span className="text-slate-400">ATK</span>
               <span className="font-bold text-amber-300">

@@ -219,6 +219,8 @@ export default function App() {
           onClose={() => setSelectedHunterId(null)}
           isFollowing={isFollowing}
           onToggleFollow={handleToggleFollow}
+          partyMembers={currentHunter.partyId ? simulation.partyMembers(currentHunter).filter(h => h.id !== currentHunter.id) : []}
+          isPartyLeader={simulation.isPartyLeader(currentHunter)}
         />
       )}
 
@@ -239,6 +241,7 @@ export default function App() {
         hunters={simulation.hunters}
         selectedHunterId={selectedHunterId}
         onSelectHunter={handleSelectHunter}
+        partyLeaderIds={new Set([...simulation.parties.values()].map(p => p.leaderId))}
       />
 
       {/* 6. Live Town Chronicle / Event Log (Bottom Right) */}
@@ -315,7 +318,7 @@ export default function App() {
             <div className="py-4 space-y-3 text-xs leading-relaxed text-slate-300">
               <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
                 <strong className="text-amber-300 block mb-0.5">1. Autonomous Hunter Lifecycle:</strong>
-                Heroes auto-summon at the portal every 30s (up to the town cap: 4 + 2 per Sanctuary Hall level). New arrivals register at Sanctuary Hall — funding it raises the cap and the town tax rate. They march out through the region gates (palisade walls funnel every trip through guarded chokepoints), slay monsters, gain EXP, and collect valuable trophies. Overleveled kills earn diminished spoils, worthless beyond +2 levels — hunt at grade. Hunters hold the field until HP drops below 20%, bags fill, or they outgrow the zone. Every town arrival chains all errands (tavern, cauldron, forge, academy, clinic) before marching back out. Five dark reserved lands border the realm (north + west) for future expansion.
+                Heroes auto-summon at the portal every 30s (up to the town cap: 4 + 2 per Sanctuary Hall level). New arrivals register at Sanctuary Hall — funding it raises the cap and the town tax rate. They march out through the region gates (palisade walls funnel every trip through guarded chokepoints), slay monsters, gain EXP, and collect valuable trophies. Overleveled kills earn diminished spoils, worthless beyond +2 levels — hunt at grade. Crowded or outmatched hunters form field parties of up to 5 (👥, leader ♛): members follow the leader's target, pool danger assessment, and split EXP/gold with rotating loot — parties dissolve on entering town or loading a save. Hunters hold the field until HP drops below 20%, bags fill, or they outgrow the zone. Every town arrival chains all errands (tavern, cauldron, forge, academy, clinic) before marching back out. Five dark reserved lands border the realm (north + west) for future expansion.
               </div>
 
               <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">

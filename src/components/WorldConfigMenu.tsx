@@ -50,6 +50,7 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
   const [grayGap, setGrayGap] = useState(simulation.agentConfig.grayGap);
   const [huntDrive, setHuntDrive] = useState(Math.round(simulation.agentConfig.huntBaseline * 100));
   const [tavernMood, setTavernMood] = useState(simulation.agentConfig.tavernMood);
+  const [partiesEnabled, setPartiesEnabled] = useState(simulation.agentConfig.partiesEnabled !== false);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -63,6 +64,7 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
       setGrayGap(simulation.agentConfig.grayGap);
       setHuntDrive(Math.round(simulation.agentConfig.huntBaseline * 100));
       setTavernMood(simulation.agentConfig.tavernMood);
+      setPartiesEnabled(simulation.agentConfig.partiesEnabled !== false);
     }, 500);
     return () => clearInterval(interval);
   }, [simulation]);
@@ -89,6 +91,7 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
     setGrayGap(simulation.agentConfig.grayGap);
     setHuntDrive(Math.round(simulation.agentConfig.huntBaseline * 100));
     setTavernMood(simulation.agentConfig.tavernMood);
+    setPartiesEnabled(simulation.agentConfig.partiesEnabled !== false);
   };
 
   const kills = simulation.totalMonstersDefeated;
@@ -246,6 +249,25 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
                 </div>
                 <Stepper value={tavernMood} min={10} max={100} step={5} onChange={v => { simulation.updateAgentConfig({ tavernMood: v }); syncAgent(); }} accent="text-cyan-300" />
                 <p className="text-[10px] text-slate-500 mt-1">Mood below this sends hunters for a drink — lower = fewer tavern trips.</p>
+              </div>
+              <div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-300 mb-1">
+                  <span>Field parties</span><span className="font-mono text-cyan-300">{partiesEnabled ? 'ON' : 'OFF'}</span>
+                </div>
+                <button
+                  onClick={() => { simulation.updateAgentConfig({ partiesEnabled: !partiesEnabled }); syncAgent(); }}
+                  className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all cursor-pointer ${
+                    partiesEnabled
+                      ? 'border-cyan-400/60 bg-cyan-500/15 text-cyan-200'
+                      : 'border-slate-700 bg-slate-800/70 text-slate-400'
+                  }`}
+                >
+                  <span className="text-xs font-bold">{partiesEnabled ? 'ON — hunters team up, split spoils' : 'OFF — solo hunters only'}</span>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${partiesEnabled ? 'bg-cyan-500/30' : 'bg-slate-700'}`}>
+                    {partiesEnabled ? 'ACTIVE' : 'PAUSED'}
+                  </span>
+                </button>
+                <p className="text-[10px] text-slate-500 mt-1">Crowded or outmatched hunters form parties of up to 5 — OFF dissolves them live.</p>
               </div>
               <button
                 onClick={() => { simulation.updateAgentConfig({ ...DEFAULT_AGENT_CONFIG }); syncAgent(); }}

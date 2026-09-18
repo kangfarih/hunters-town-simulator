@@ -80,6 +80,9 @@ export interface Hunter {
   targetMonsterId: string | null;
   targetBuildingId: string | null;
 
+  // Field party (runtime-only; dissolved on save/load, reforms live)
+  partyId: string | null;
+
   // Equipment & Inventory
   weapon: Equipment;
   armor: Equipment;

@@ -191,6 +191,7 @@ export interface AgentConfig {
   grayGap: number;
   huntBaseline: number;
   tavernMood: number;
+  partiesEnabled: boolean;
 }
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
@@ -199,7 +200,16 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   grayGap: 3,
   huntBaseline: 0.5,
   tavernMood: 65,
+  partiesEnabled: true,
 };
+
+/** Runtime-only field party: up to 5 hunters, led by the highest level. */
+export interface Party {
+  id: string;
+  leaderId: string;
+  memberIds: string[];
+  lootTurn: number;
+}
 
 /** Clamp a (possibly foreign) agent-config blob into valid ranges. */
 export function clampAgentConfig(cfg: Partial<AgentConfig>): AgentConfig {
@@ -211,6 +221,7 @@ export function clampAgentConfig(cfg: Partial<AgentConfig>): AgentConfig {
     grayGap: Math.min(6, Math.max(2, Math.round(num(cfg.grayGap, DEFAULT_AGENT_CONFIG.grayGap)))),
     huntBaseline: Math.min(0.9, Math.max(0.1, num(cfg.huntBaseline, DEFAULT_AGENT_CONFIG.huntBaseline))),
     tavernMood: Math.min(100, Math.max(10, num(cfg.tavernMood, DEFAULT_AGENT_CONFIG.tavernMood))),
+    partiesEnabled: typeof cfg.partiesEnabled === 'boolean' ? cfg.partiesEnabled : DEFAULT_AGENT_CONFIG.partiesEnabled,
   };
 }
 
@@ -343,6 +354,11 @@ export class GameSimulation {
   private windowDeaths: number = 0;
   private simTime: number = 0;
   private lastDirectorEval: number = 0;
+
+  // Field parties: runtime-only (EXCLUDED from save snapshots; all
+  // partyIds dissolve to null on load and parties reform live).
+  public parties: Map<string, Party> = new Map();
+  private partyTimer: number = 0;
 
   // Kill-switch for saving (used by Reset World so the pagehide
   // autosave doesn't resurrect the cleared save during reload)
@@ -479,8 +495,193 @@ export class GameSimulation {
     this.agentConfig = clampAgentConfig({ ...this.agentConfig, ...patch });
     if (JSON.stringify(this.agentConfig) === before) return;
     const c = this.agentConfig;
-    this.addLog('upgrade', `Agent behavior tuned: retreat ${Math.round(c.retreatHpFrac * 100)}% HP · bravery ${c.dangerHits} hits · gray gap ${c.grayGap} · hunt drive ${Math.round(c.huntBaseline * 100)} · tavern mood ${c.tavernMood}.`);
+    this.addLog('upgrade', `Agent behavior tuned: retreat ${Math.round(c.retreatHpFrac * 100)}% HP · bravery ${c.dangerHits} hits · gray gap ${c.grayGap} · hunt drive ${Math.round(c.huntBaseline * 100)} · tavern mood ${c.tavernMood} · parties ${c.partiesEnabled ? 'ON' : 'OFF'}.`);
     this.saveToLocalStorage();
+  }
+
+  // --------------------------------------------------------------------------
+  // FIELD PARTIES (runtime-only; dissolve on load, reform live)
+  // --------------------------------------------------------------------------
+
+  /** Live party of a hunter, or null when solo / dissolved. */
+  public partyOf(hunter: Hunter): Party | null {
+    if (!hunter.partyId) return null;
+    const p = this.parties.get(hunter.partyId);
+    if (!p) { hunter.partyId = null; return null; }
+    return p;
+  }
+
+  /** Live members of a hunter's party (resolves ids, prunes dead/missing). */
+  public partyMembers(hunter: Hunter): Hunter[] {
+    const p = this.partyOf(hunter);
+    if (!p) return [];
+    const live = p.memberIds
+      .map(id => this.hunters.find(h => h.id === id))
+      .filter((h): h is Hunter => h !== undefined);
+    p.memberIds = live.map(h => h.id);
+    return live;
+  }
+
+  /** Count of live party members (1 when solo). Never counts the missing. */
+  private livePartySize(hunter: Hunter): number {
+    if (!hunter.partyId) return 1;
+    const p = this.parties.get(hunter.partyId);
+    if (!p) return 1;
+    let n = 0;
+    for (const id of p.memberIds) {
+      if (this.hunters.some(h => h.id === id)) n++;
+    }
+    return Math.max(1, n);
+  }
+
+  /** True when this hunter currently leads their party. */
+  public isPartyLeader(hunter: Hunter): boolean {
+    const p = this.partyOf(hunter);
+    return p !== null && p.leaderId === hunter.id;
+  }
+
+  /** Dissolve a party: every member goes solo. */
+  public disbandParty(id: string) {
+    const p = this.parties.get(id);
+    if (!p) return;
+    for (const mid of p.memberIds) {
+      const m = this.hunters.find(h => h.id === mid);
+      if (m && m.partyId === id) m.partyId = null;
+    }
+    this.parties.delete(id);
+  }
+
+  /**
+   * Pull one hunter out of their party. Reassigns the lead to the
+   * highest-level remaining member; disbands below 2. Called by the
+   * knockdown path and every town entry (field-only parties).
+   */
+  public removeFromParty(hunter: Hunter) {
+    const pid = hunter.partyId;
+    if (!pid) return;
+    hunter.partyId = null;
+    const p = this.parties.get(pid);
+    if (!p) return;
+    p.memberIds = p.memberIds.filter(id => id !== hunter.id && this.hunters.some(h => h.id === id));
+    if (p.memberIds.length < 2) {
+      this.disbandParty(pid);
+      return;
+    }
+    if (!p.memberIds.includes(p.leaderId)) {
+      let best = this.hunters.find(h => h.id === p.memberIds[0]) ?? null;
+      for (const id of p.memberIds) {
+        const m = this.hunters.find(h => h.id === id);
+        if (m && (!best || m.level > best.level)) best = m;
+      }
+      if (best) p.leaderId = best.id;
+    }
+  }
+
+  /**
+   * Crowding trigger: hunters-per-fair-monster in the hunter's zone above
+   * 1.5 (counts HUNTING/FIGHTING hunters vs alive fair-for-them monsters).
+   */
+  private isCrowdedFor(hunter: Hunter): boolean {
+    const z = this.zoneOf(hunter.gx, hunter.gy);
+    if (z < 1) return false;
+    let hunters = 0;
+    for (const o of this.hunters) {
+      if ((o.state === 'HUNTING' || o.state === 'FIGHTING') && this.zoneOf(o.gx, o.gy) === z) hunters++;
+    }
+    let fair = 0;
+    for (const m of this.monsters) {
+      if (m.hp > 0 && m.zone === z && !this.isTooHardFor(m, hunter)) fair++;
+    }
+    return fair > 0 && hunters / fair > 1.5;
+  }
+
+  /**
+   * Ambition trigger: the best pref-zone prey is too hard solo (danger
+   * recomputed WITHOUT the party bonus) but fair WITH a full party bonus.
+   */
+  private isAmbitiousFor(hunter: Hunter): boolean {
+    const pref = this.preferredZone(hunter.level);
+    let best: Monster | null = null;
+    let bestDist = Infinity;
+    for (const m of this.monsters) {
+      if (m.hp <= 0 || m.zone !== pref) continue;
+      const d = gridDistance(hunter.gx, hunter.gy, m.gx, m.gy);
+      if (!best || m.level > best.level || (m.level === best.level && d < bestDist)) {
+        best = m;
+        bestDist = d;
+      }
+    }
+    if (!best) return false;
+    return this.isTooHardFor(best, hunter, 1) && !this.isTooHardFor(best, hunter, 5);
+  }
+
+  /**
+   * Periodic matching pass: motivated solo seekers (crowded or ambitious,
+   * in HUNTING/FIGHTING) join compatible existing parties (<5, same zone,
+   * leader level ±3) or form new greedy groups (sorted by level, filled to
+   * 5, all within ±3). Leader is the highest level. Logs formations only.
+   */
+  public runPartyFormation() {
+    const seekers = this.hunters.filter(h =>
+      h.partyId == null && (h.state === 'HUNTING' || h.state === 'FIGHTING'));
+    if (seekers.length === 0) return;
+    const motivated = seekers.filter(h => this.isCrowdedFor(h) || this.isAmbitiousFor(h));
+    if (motivated.length === 0) return;
+    const unplaced = new Set(motivated.map(h => h.id));
+    const byId = new Map(motivated.map(h => [h.id, h]));
+
+    // 1. Fill existing parties first (same zone, leader level ±3, cap 5).
+    for (const p of this.parties.values()) {
+      const live = p.memberIds
+        .map(id => this.hunters.find(h => h.id === id))
+        .filter((h): h is Hunter => h !== undefined);
+      p.memberIds = live.map(h => h.id);
+      if (live.length >= 5 || unplaced.size === 0) continue;
+      const leader = live.find(h => h.id === p.leaderId) ?? live[0];
+      if (!leader) continue;
+      p.leaderId = leader.id;
+      const lz = this.zoneOf(leader.gx, leader.gy);
+      for (const s of motivated) {
+        if (live.length >= 5) break;
+        if (!unplaced.has(s.id)) continue;
+        if (this.zoneOf(s.gx, s.gy) !== lz) continue;
+        if (Math.abs(s.level - leader.level) > 3) continue;
+        p.memberIds.push(s.id);
+        s.partyId = p.id;
+        live.push(s);
+        unplaced.delete(s.id);
+      }
+    }
+
+    // 2. Form new parties: group by zone, greedy fill to 5 within ±3 levels.
+    const byZone = new Map<number, Hunter[]>();
+    for (const s of motivated) {
+      if (!unplaced.has(s.id)) continue;
+      const z = this.zoneOf(s.gx, s.gy);
+      const list = byZone.get(z);
+      if (list) list.push(s);
+      else byZone.set(z, [s]);
+    }
+    for (const list of byZone.values()) {
+      list.sort((a, b) => a.level - b.level);
+      let i = 0;
+      while (i < list.length) {
+        const group: Hunter[] = [list[i]];
+        i++;
+        while (group.length < 5 && i < list.length && list[i].level - group[0].level <= 3) {
+          group.push(list[i]);
+          i++;
+        }
+        if (group.length < 2) continue; // leftover singles stay solo
+        const leader = group.reduce((a, b) => (b.level > a.level ? b : a));
+        const ordered = [leader, ...group.filter(g => g.id !== leader.id)];
+        const id = `party-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        this.parties.set(id, { id, leaderId: leader.id, memberIds: ordered.map(h => h.id), lootTurn: 0 });
+        for (const m of ordered) m.partyId = id;
+        const names = ordered.map(h => h.name.split(' ')[0]);
+        this.addLog('combat', `${names.slice(0, 2).join(', ')} formed a party (${ordered.length})!`, leader.name);
+      }
+    }
   }
 
   public summonHero(forcedClass?: CharacterClass, forcedRarity?: HunterRarity): Hunter | null {
@@ -534,8 +735,11 @@ export class GameSimulation {
       targetGx: 29,
       targetGy: 28,
       facing: 'SE',
+      // Target IDs
       targetMonsterId: null,
       targetBuildingId: null,
+      // Field party (runtime-only; joins live via formation)
+      partyId: null,
       weapon: {
         id: `wpn-${charClass}`,
         name: base.weaponName,
@@ -704,6 +908,7 @@ export class GameSimulation {
       h.stateTimer = 0;
       h.targetMonsterId = null;
       h.targetBuildingId = null;
+      h.partyId = null; // retraining dissolves field parties (they reform live)
       this.marchOutToHunt(h);
     }
     for (const b of this.buildings) b.currentVisitors = [];
@@ -912,6 +1117,21 @@ export class GameSimulation {
       this.spawnBoss();
     }
 
+    // 2b. Field parties: OFF dissolves everything live; ON runs a
+    // matching pass every ~3 sim-seconds.
+    if (!this.agentConfig.partiesEnabled) {
+      if (this.parties.size > 0) {
+        for (const id of [...this.parties.keys()]) this.disbandParty(id);
+      }
+      this.partyTimer = 0;
+    } else {
+      this.partyTimer += effectiveDt;
+      if (this.partyTimer >= 3) {
+        this.partyTimer = 0;
+        this.runPartyFormation();
+      }
+    }
+
     // 3. Update Hunters (AI & Autonomous Decision Making)
     for (let i = this.hunters.length - 1; i >= 0; i--) {
       this.updateHunterAI(this.hunters[i], effectiveDt);
@@ -996,6 +1216,34 @@ export class GameSimulation {
       if (hunter.tonicBoostTimer <= 0) {
         hunter.tonicBoostTimer = 0;
         hunter.tonicBoost = 0;
+      }
+    }
+
+    // Field parties are field-only: any town state dissolves membership.
+    if (hunter.partyId && (hunter.state === 'RETURNING_TO_TOWN' ||
+        hunter.state === 'SELLING_LOOT' || hunter.state === 'UPGRADING_GEAR' ||
+        hunter.state === 'LEARNING_SKILL' || hunter.state === 'BREWING_ELIXIR' ||
+        hunter.state === 'RECOVERING_CLINIC' || hunter.state === 'RESTING_TAVERN' ||
+        hunter.state === 'WANDERING_TOWN')) {
+      this.removeFromParty(hunter);
+    }
+
+    // Party follow: non-leader members adopt the live leader's target.
+    // Members run all own logic (movement/combat/HP-retreat/knockdown)
+    // normally against it; pooled danger math covers fairness, and the
+    // HP retreat + knockdown paths above/below still fire on their own.
+    if (this.agentConfig.partiesEnabled && hunter.partyId) {
+      const party = this.parties.get(hunter.partyId);
+      if (party && party.leaderId !== hunter.id) {
+        const leader = this.hunters.find(h => h.id === party.leaderId);
+        if (leader && leader.targetMonsterId) {
+          const prey = this.monsters.find(m => m.id === leader.targetMonsterId);
+          if (prey && prey.hp > 0) {
+            hunter.targetMonsterId = prey.id;
+            hunter.targetGx = prey.gx;
+            hunter.targetGy = prey.gy;
+          }
+        }
       }
     }
 
@@ -1360,12 +1608,21 @@ export class GameSimulation {
    * one is +35% maxHp of potential in-combat healing, so an elixir-rich
    * hunter (e.g. a Lv.8 carrying brews) reads a crypt fight as fair where
    * a raw-HP test would pin them in the forest on gray prey forever.
+   * Party pooling: with ≥1 other live party member the hunter side scales
+   * by 1 + 0.25 per extra live member, applied to effective DEF and to
+   * effective HP (hp + elixir bank) in the hits-to-die test. The +4
+   * level-gap veto is unchanged, and combat damage itself stays individual.
+   * Pass an explicit partySizeOverride for hypotheticals (1 = solo lens,
+   * 5 = full-party lens); when parties are disabled the bonus never applies
+   * unless an override is given.
    */
-  public isTooHardFor(monster: Monster, hunter: Hunter): boolean {
+  public isTooHardFor(monster: Monster, hunter: Hunter, partySizeOverride?: number): boolean {
     if (monster.level > hunter.level + 4) return true;
-    const estHit = monster.atk - this.effectiveDef(hunter) * 0.5;
+    const size = partySizeOverride ?? (this.agentConfig.partiesEnabled ? this.livePartySize(hunter) : 1);
+    const mult = 1 + 0.25 * Math.max(0, size - 1);
+    const estHit = monster.atk - this.effectiveDef(hunter) * mult * 0.5;
     if (estHit <= 0) return false;
-    const effectiveHp = hunter.hp + 0.35 * this.effectiveMaxHp(hunter) * hunter.elixirs;
+    const effectiveHp = (hunter.hp + 0.35 * this.effectiveMaxHp(hunter) * hunter.elixirs) * mult;
     return effectiveHp / estHit < this.agentConfig.dangerHits;
   }
 
@@ -1470,37 +1727,103 @@ export class GameSimulation {
     // exp (rounded). diff == G-1: 25% exp (rounded). diff >= G (non-boss):
     // NOTHING — no exp, drops, gold, or town tax. Kills still count and the
     // monster is still removed. (G=3 reproduces the classic curve exactly.)
+    // Gray/nothing rules apply FIRST to the totals; party sharing below
+    // only ever splits those computed totals.
     const levelDiff = hunter.level - monster.level;
     const G = this.agentConfig.grayGap;
+    let expTotal: number;
+    let goldTotal: number;
+    let dropTotals: ItemDrop[];
     if (monster.isBoss || levelDiff <= G - 3) {
-      // Distribute Rewards
-      hunter.gold += monster.goldReward;
-      this.townGold += Math.round(monster.goldReward * this.townTaxRate()); // Town tax
-
-      // Collect Loot Drop
-      monster.drops.forEach(drop => {
-        hunter.inventory.push({ ...drop });
-      });
-
-      this.addFloatingText(`+${monster.expReward} EXP`, hunter.gx, hunter.gy, '#a855f7', 12);
-      this.gainExp(hunter, monster.expReward);
+      expTotal = monster.expReward;
+      goldTotal = monster.goldReward;
+      dropTotals = monster.drops;
     } else if (levelDiff === G - 2 || levelDiff === G - 1) {
-      const scaledExp = Math.round(monster.expReward * (levelDiff === G - 2 ? 0.5 : 0.25));
-      // Distribute Rewards
-      hunter.gold += monster.goldReward;
-      this.townGold += Math.round(monster.goldReward * this.townTaxRate()); // Town tax
-
-      // Collect Loot Drop
-      monster.drops.forEach(drop => {
-        hunter.inventory.push({ ...drop });
-      });
-
-      if (scaledExp > 0) {
-        this.addFloatingText(`+${scaledExp} EXP (diminished)`, hunter.gx, hunter.gy, '#a855f7', 12);
-        this.gainExp(hunter, scaledExp);
-      }
+      expTotal = Math.round(monster.expReward * (levelDiff === G - 2 ? 0.5 : 0.25));
+      goldTotal = monster.goldReward;
+      dropTotals = monster.drops;
     } else {
+      expTotal = 0;
+      goldTotal = 0;
+      dropTotals = [];
       this.addFloatingText('No spoils — prey too weak', hunter.gx, hunter.gy, '#6b7280', 11);
+    }
+
+    if (dropTotals.length > 0 || goldTotal > 0 || expTotal > 0) {
+      // Recipients: live party members within 6 cells of the kill
+      // (including the killer). Solo hunters — or parties with nobody else
+      // in range — use today's solo rules: killer takes all, loot to killer.
+      let recipients: Hunter[] = [];
+      const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
+      if (party) {
+        recipients = this.partyMembers(hunter)
+          .filter(m => gridDistance(m.gx, m.gy, monster.gx, monster.gy) <= 6);
+      }
+      if (recipients.length <= 1) {
+        // Distribute Rewards
+        hunter.gold += goldTotal;
+        this.townGold += Math.round(goldTotal * this.townTaxRate()); // Town tax
+
+        // Collect Loot Drop
+        dropTotals.forEach(drop => {
+          hunter.inventory.push({ ...drop });
+        });
+
+        if (expTotal > 0) {
+          const diminished = levelDiff > G - 3 && !monster.isBoss;
+          this.addFloatingText(diminished ? `+${expTotal} EXP (diminished)` : `+${expTotal} EXP`, hunter.gx, hunter.gy, '#a855f7', 12);
+          this.gainExp(hunter, expTotal);
+        }
+      } else {
+        // Shared rewards: shares = n+1 where n = recipients; the killer
+        // takes 2 shares, each other recipient 1 share, of BOTH exp (via
+        // gainExp each — 0-exp stays 0) and gold. Town tax is computed on
+        // the gold total exactly as solo (before splitting). Integer
+        // shares floor the others and hand the remainder to the killer so
+        // the distributed sum always equals the computed total.
+        const n = recipients.length;
+        const otherExp = Math.floor(expTotal / (n + 1));
+        const killerExp = expTotal - otherExp * (n - 1);
+        const otherGold = Math.floor(goldTotal / (n + 1));
+        const killerGold = goldTotal - otherGold * (n - 1);
+        this.townGold += Math.round(goldTotal * this.townTaxRate()); // Town tax
+        for (const r of recipients) {
+          const isKiller = r.id === hunter.id;
+          r.gold += isKiller ? killerGold : otherGold;
+          const share = isKiller ? killerExp : otherExp;
+          if (share > 0) this.gainExp(r, share);
+        }
+        if (killerExp > 0) {
+          this.addFloatingText(`+${killerExp} EXP (party of ${n})`, hunter.gx, hunter.gy, '#a855f7', 12);
+        }
+
+        // Loot rotation: party.lootTurn indexes memberIds; each drop goes
+        // to the next rotation member (in memberIds order from lootTurn)
+        // who is in range AND has bag room. lootTurn advances past every
+        // considered member (assigned or skipped, each at most once per
+        // item); when nobody qualifies the killer takes it (overflow
+        // allowed) so every drop always lands in exactly one inventory.
+        for (const drop of dropTotals) {
+          let placed = false;
+          const size = party!.memberIds.length;
+          if (size > 0) {
+            const start = ((party!.lootTurn % size) + size) % size;
+            for (let k = 0; k < size; k++) {
+              const idx = (start + k) % size;
+              party!.lootTurn = idx + 1;
+              const m = this.hunters.find(h => h.id === party!.memberIds[idx]);
+              if (!m) continue;
+              if (gridDistance(m.gx, m.gy, monster.gx, monster.gy) <= 6 &&
+                  m.inventory.length < m.maxInventorySlots) {
+                m.inventory.push({ ...drop });
+                placed = true;
+                break;
+              }
+            }
+          }
+          if (!placed) hunter.inventory.push({ ...drop });
+        }
+      }
     }
 
     // Remove monster
@@ -1570,6 +1893,7 @@ export class GameSimulation {
    * (hunters used to muster at the gate first — a pre-walls leftover).
    */
   private routeToBuilding(hunter: Hunter, building: Building) {
+    this.removeFromParty(hunter); // field-only parties end at town entry
     hunter.state = 'RETURNING_TO_TOWN';
     hunter.targetBuildingId = building.id;
     hunter.targetGx = building.doorGx;
@@ -1612,6 +1936,7 @@ export class GameSimulation {
    * visit covers every errand.
    */
   private returnToPlaza(hunter: Hunter) {
+    this.removeFromParty(hunter); // field-only parties end at town entry
     hunter.state = 'RETURNING_TO_TOWN';
     hunter.targetBuildingId = null;
     hunter.targetGx = 29;
@@ -2175,6 +2500,7 @@ export class GameSimulation {
     this.totalHunterDeaths++;
     this.windowDeaths++;
     this.evaluateDirector();
+    this.removeFromParty(hunter); // knockdown ends field membership
     this.addFloatingText(`💀 ${hunter.name} RESCUED!`, hunter.gx, hunter.gy, '#ef4444', 14);
     this.addLog('combat', `${hunter.name} was defeated by ${monster.name} and rushed to Mercy Clinic for resuscitation!`, hunter.name);
 
@@ -2678,6 +3004,9 @@ export class GameSimulation {
       let rescued = 0;
       for (const h of sim.hunters) {
         h.targetMonsterId = null;
+        // Field parties are runtime-only: they reform live, so every load
+        // dissolves them (parties Map itself is never snapshotted).
+        h.partyId = null;
         if (typeof h.isAttacking !== 'boolean') h.isAttacking = false;
         // Migrate saves from before the mood/morale system
         if (typeof h.mood !== 'number' || !Number.isFinite(h.mood)) h.mood = 100;
