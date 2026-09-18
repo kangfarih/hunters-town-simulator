@@ -1,0 +1,6 @@
+{
+  "name": "Hunters Town - Idle Isometric RPG",
+  "description": "An autonomous 16-bit isometric idle RPG where heroes auto-summon, hunt monsters, cast animated skills, sell loot to NPC stores, and auto-upgrade while the player acts as an Omniscience Spectator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
