@@ -1,6 +1,7 @@
-// Walled regions + A* pathfinding over the 40x40 town grid.
-// Town sits NW (0..18, 0..18); forest NE, graveyard SW, volcano SE.
+// Walled regions + A* pathfinding over the 60x60 town grid.
+// Town sits center (20..38, 20..38); forest E, graveyard S, volcano SE.
 // Single-cell palisade walls separate regions, pierced by 3-wide gates.
+// Five dark reserved regions free the northwest bands (gx<20 || gy<20).
 
 import { MAP_GRID_WIDTH, MAP_GRID_HEIGHT } from './isometric';
 
@@ -11,25 +12,47 @@ export interface PathPoint {
 
 const inRange = (v: number, lo: number, hi: number) => v >= lo && v <= hi;
 
+/**
+ * Reserved regions: dark placeholder land in the freed northwest bands
+ * (gx<20 || gy<20 side), held for future expansion. Walkable, no
+ * walls/gates/decor, no spawns, no buildings, no AI targets. Single
+ * source of truth — render + sim both use reserveAt.
+ */
+export const RESERVE_REGIONS: { name: string; minGx: number; maxGx: number; minGy: number; maxGy: number }[] = [
+  { name: 'Reserved Grounds I', minGx: 0, maxGx: 19, minGy: 0, maxGy: 19 },
+  { name: 'Reserved Grounds II', minGx: 0, maxGx: 19, minGy: 20, maxGy: 39 },
+  { name: 'Reserved Grounds III', minGx: 0, maxGx: 19, minGy: 40, maxGy: 59 },
+  { name: 'Reserved Grounds IV', minGx: 20, maxGx: 39, minGy: 0, maxGy: 19 },
+  { name: 'Reserved Grounds V', minGx: 40, maxGx: 59, minGy: 0, maxGy: 19 },
+];
+
+/** Region name for a grid cell, or null when not inside a reserve. */
+export function reserveAt(gx: number, gy: number): string | null {
+  for (const r of RESERVE_REGIONS) {
+    if (gx >= r.minGx && gx <= r.maxGx && gy >= r.minGy && gy <= r.maxGy) return r.name;
+  }
+  return null;
+}
+
 /** True if the integer cell holds a palisade wall segment. */
 export function isWallCell(cx: number, cy: number): boolean {
-  // East wall of town (town | forest), gate at gy 9..11 (Town Gate road)
-  if (cx === 19 && inRange(cy, 0, 18)) return !inRange(cy, 9, 11);
-  // South wall of town (town | graveyard), gate at gx 9..11 (South Gate)
-  if (cy === 19 && inRange(cx, 0, 18)) return !inRange(cx, 9, 11);
-  // Graveyard | volcano wall, gate at gy 27..29 (West Volcano Gate)
-  if (cx === 19 && inRange(cy, 19, 39)) return !inRange(cy, 27, 29);
-  // Forest | volcano wall, gate at gx 27..29 (North Volcano Gate)
-  if (cy === 19 && inRange(cx, 19, 39)) return !inRange(cx, 27, 29);
+  // East wall of town (town | forest), gate at gy 29..31 (Town Gate road)
+  if (cx === 39 && inRange(cy, 20, 38)) return !inRange(cy, 29, 31);
+  // South wall of town (town | graveyard), gate at gx 29..31 (South Gate)
+  if (cy === 39 && inRange(cx, 20, 38)) return !inRange(cx, 29, 31);
+  // Graveyard | volcano wall, gate at gy 47..49 (West Volcano Gate)
+  if (cx === 39 && inRange(cy, 39, 59)) return !inRange(cy, 47, 49);
+  // Forest | volcano wall, gate at gx 47..49 (North Volcano Gate)
+  if (cy === 39 && inRange(cx, 39, 59)) return !inRange(cx, 47, 49);
   return false;
 }
 
 /** Gate (opening) cells — walkable breaches in the walls. */
 export const GATE_CELLS: PathPoint[] = [
-  { x: 19, y: 9 }, { x: 19, y: 10 }, { x: 19, y: 11 },
-  { x: 9, y: 19 }, { x: 10, y: 19 }, { x: 11, y: 19 },
-  { x: 19, y: 27 }, { x: 19, y: 28 }, { x: 19, y: 29 },
-  { x: 27, y: 19 }, { x: 28, y: 19 }, { x: 29, y: 19 },
+  { x: 39, y: 29 }, { x: 39, y: 30 }, { x: 39, y: 31 },
+  { x: 29, y: 39 }, { x: 30, y: 39 }, { x: 31, y: 39 },
+  { x: 39, y: 47 }, { x: 39, y: 48 }, { x: 39, y: 49 },
+  { x: 47, y: 39 }, { x: 48, y: 39 }, { x: 49, y: 39 },
 ];
 
 /** All wall cells (for rendering the palisades). Computed once. */

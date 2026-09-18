@@ -18,7 +18,7 @@ function createPixelCanvas(width: number, height: number): HTMLCanvasElement {
 // 1. ISOMETRIC TERRAIN TILES
 // --------------------------------------------------------------------------
 
-export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road'): Texture {
+export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark'): Texture {
   const canvas = createPixelCanvas(TILE_WIDTH, TILE_HEIGHT + 8);
   const ctx = canvas.getContext('2d')!;
 
@@ -99,6 +99,18 @@ export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest
     ctx.fillRect(30, 17, 8, 1);
     ctx.fillStyle = '#facc15';
     ctx.fillRect(31, 14, 2, 1);
+  } else if (type === 'reserve_dark') {
+    // Reserved expansion land: very dark slate/indigo placeholder
+    ctx.fillStyle = '#0b0f1e';
+    ctx.fill();
+    // Faint speckles
+    ctx.fillStyle = '#1b2340';
+    ctx.fillRect(22, 10, 2, 2);
+    ctx.fillRect(36, 16, 2, 2);
+    ctx.fillRect(28, 20, 2, 1);
+    ctx.fillStyle = '#141b33';
+    ctx.fillRect(30, 8, 2, 1);
+    ctx.fillRect(18, 16, 2, 2);
   } else {
     // stone_road
     ctx.fillStyle = '#94a3b8';
@@ -112,6 +124,14 @@ export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest
   ctx.strokeStyle = 'rgba(0,0,0,0.25)';
   ctx.lineWidth = 1;
   ctx.stroke();
+
+  // Reserved land keeps a slightly lighter edge on top so reserve
+  // borders read at a glance.
+  if (type === 'reserve_dark') {
+    ctx.strokeStyle = '#3b476b';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 
   // Edge depth skirt
   ctx.beginPath();

@@ -3,8 +3,8 @@
 export const TILE_WIDTH = 64;
 export const TILE_HEIGHT = 32;
 
-export const MAP_GRID_WIDTH = 40;
-export const MAP_GRID_HEIGHT = 40;
+export const MAP_GRID_WIDTH = 60;
+export const MAP_GRID_HEIGHT = 60;
 
 export interface Point {
   x: number;

@@ -5,7 +5,7 @@ import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel } from './simulation';
 import { 
   gridToScreen, screenToGrid, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
 } from './isometric';
-import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions } from './pathfinding';
+import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS } from './pathfinding';
 import { 
   createIsoTileTexture, createHunterFrame, createMonsterFrame, 
   createBuildingTexture, createSkillVfxTexture,
@@ -91,7 +91,7 @@ export class PixiRenderer {
 
   private centerCameraOnTown() {
     if (!this.app) return;
-    const centerScreen = gridToScreen(10, 10);
+    const centerScreen = gridToScreen(30, 30);
     this.cameraX = (this.app.screen.width / 2) - centerScreen.x * this.cameraZoom;
     this.cameraY = (this.app.screen.height / 2) - centerScreen.y * this.cameraZoom;
     this.worldContainer.position.set(this.cameraX, this.cameraY);
@@ -170,6 +170,7 @@ export class PixiRenderer {
     this.tileTextures['graveyard_soil'] = createIsoTileTexture('graveyard_soil');
     this.tileTextures['volcanic_rock'] = createIsoTileTexture('volcanic_rock');
     this.tileTextures['stone_road'] = createIsoTileTexture('stone_road');
+    this.tileTextures['reserve_dark'] = createIsoTileTexture('reserve_dark');
 
     // Pre-cache building textures
     this.simulation.buildings.forEach(b => {
@@ -208,26 +209,31 @@ export class PixiRenderer {
 
     for (let gx = 0; gx < MAP_GRID_WIDTH; gx++) {
       for (let gy = 0; gy < MAP_GRID_HEIGHT; gy++) {
-        let tileType: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' = 'forest_grass';
+        let tileType: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark' = 'forest_grass';
 
-        // Town Area: 0..18, 0..18
-        if (gx <= 18 && gy <= 18) {
-          if (gx >= 6 && gx <= 12 && gy >= 6 && gy <= 14) {
+        // Reserved expansion land (freed northwest bands): dark placeholder,
+        // skipping all existing region logic below.
+        if (reserveAt(gx, gy) !== null) {
+          tileType = 'reserve_dark';
+        }
+        // Town Area: 20..38, 20..38
+        else if (gx >= 20 && gx <= 38 && gy >= 20 && gy <= 38) {
+          if (gx >= 26 && gx <= 32 && gy >= 26 && gy <= 34) {
             tileType = 'town_wood'; // Center wooden plaza
           } else {
             tileType = 'town_cobble'; // Cobblestone town
           }
         }
         // Road Connecting Town Gate to Field
-        else if (gx >= 16 && gx <= 22 && gy >= 8 && gy <= 12) {
+        else if (gx >= 36 && gx <= 42 && gy >= 28 && gy <= 32) {
           tileType = 'stone_road';
         }
-        // Zone 1: Whispering Forest (gx > 18, gy <= 18)
-        else if (gx > 18 && gy <= 18) {
+        // Zone 1: Whispering Forest (gx > 38, gy <= 38)
+        else if (gx > 38 && gy <= 38) {
           tileType = 'forest_grass';
         }
-        // Zone 2: Gloomy Graveyard (gx <= 18, gy > 18)
-        else if (gx <= 18 && gy > 18) {
+        // Zone 2: Gloomy Graveyard (gx <= 38, gy > 38)
+        else if (gx <= 38 && gy > 38) {
           tileType = 'graveyard_soil';
         }
         // Zone 3: Volcanic Crater (gx > 18, gy > 18)
@@ -254,6 +260,29 @@ export class PixiRenderer {
     portalGfx.circle(portalPos.x, portalPos.y + 16, 16).fill({ color: 0x818cf8, alpha: 0.5 });
     portalGfx.circle(portalPos.x, portalPos.y + 16, 8).fill({ color: 0xc7d2fe, alpha: 0.8 });
     this.terrainContainer.addChild(portalGfx);
+
+    // Faint labels at each reserved region's center tile
+    const reserveNumerals = ['I', 'II', 'III', 'IV', 'V'];
+    RESERVE_REGIONS.forEach((region, i) => {
+      const cx = Math.floor((region.minGx + region.maxGx) / 2);
+      const cy = Math.floor((region.minGy + region.maxGy) / 2);
+      const labelPos = gridToScreen(cx, cy);
+      const label = new Text({
+        text: `RESERVED ${reserveNumerals[i] ?? (i + 1)}`,
+        style: new TextStyle({
+          fontFamily: 'monospace',
+          fontSize: 12,
+          fill: '#9ca3af',
+          fontWeight: 'bold',
+          stroke: { color: '#000000', width: 3 },
+        }),
+      });
+      label.anchor.set(0.5, 0.5);
+      label.x = labelPos.x;
+      label.y = labelPos.y + 16;
+      label.alpha = 0.6;
+      this.terrainContainer.addChild(label);
+    });
   }
 
   // --------------------------------------------------------------------------

@@ -151,10 +151,10 @@ export default function App() {
     rendererRef.current.followTargetHunterId = null;
     rendererRef.current.followTargetBuildingId = null;
 
-    if (zone === 'town') rendererRef.current.jumpTo(9, 9);
-    else if (zone === 'forest') rendererRef.current.jumpTo(28, 8);
-    else if (zone === 'graveyard') rendererRef.current.jumpTo(8, 28);
-    else rendererRef.current.jumpTo(28, 28);
+    if (zone === 'town') rendererRef.current.jumpTo(29, 29);
+    else if (zone === 'forest') rendererRef.current.jumpTo(48, 28);
+    else if (zone === 'graveyard') rendererRef.current.jumpTo(28, 48);
+    else rendererRef.current.jumpTo(48, 48);
   };
 
   const handleZoom = (delta: number) => {
@@ -165,7 +165,7 @@ export default function App() {
   const handleResetCamera = () => {
     if (!rendererRef.current) return;
     rendererRef.current.cameraZoom = 1.0;
-    rendererRef.current.jumpTo(9, 9);
+    rendererRef.current.jumpTo(29, 29);
   };
 
   const handleResetSave = () => {
@@ -315,7 +315,7 @@ export default function App() {
             <div className="py-4 space-y-3 text-xs leading-relaxed text-slate-300">
               <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
                 <strong className="text-amber-300 block mb-0.5">1. Autonomous Hunter Lifecycle:</strong>
-                Heroes auto-summon at the portal every 30s (up to the town cap: 4 + 2 per Sanctuary Hall level). New arrivals register at Sanctuary Hall — funding it raises the cap and the town tax rate. They march out through the region gates (palisade walls funnel every trip through guarded chokepoints), slay monsters, gain EXP, and collect valuable trophies. Hunters hold the field until HP drops below 20%, bags fill, or they outgrow the zone. Every town arrival chains all errands (tavern, cauldron, forge, academy, clinic) before marching back out.
+                Heroes auto-summon at the portal every 30s (up to the town cap: 4 + 2 per Sanctuary Hall level). New arrivals register at Sanctuary Hall — funding it raises the cap and the town tax rate. They march out through the region gates (palisade walls funnel every trip through guarded chokepoints), slay monsters, gain EXP, and collect valuable trophies. Hunters hold the field until HP drops below 20%, bags fill, or they outgrow the zone. Every town arrival chains all errands (tavern, cauldron, forge, academy, clinic) before marching back out. Five dark reserved lands border the realm (north + west) for future expansion.
               </div>
 
               <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">

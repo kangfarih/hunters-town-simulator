@@ -4,7 +4,7 @@ import {
   MaterialStock, MaterialType
 } from '../types';
 import { gridDistance, getIsometricFacing } from './isometric';
-import { findPath, PathPoint } from './pathfinding';
+import { findPath, PathPoint, reserveAt } from './pathfinding';
 import { soundFx } from './audioSynth';
 
 // Town Building Locations (Isometric Grid)
@@ -19,12 +19,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 100,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 8,
-    gy: 4,
+    gx: 28,
+    gy: 24,
     width: 3,
     height: 3,
-    doorGx: 9,
-    doorGy: 6,
+    doorGx: 29,
+    doorGy: 26,
     description: 'The Chief Sanctuary. Manages town territory and hunter allowances.',
     serviceName: 'Town Governance',
     currentVisitors: [],
@@ -40,12 +40,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 80,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 4,
-    gy: 8,
+    gx: 24,
+    gy: 28,
     width: 2,
     height: 2,
-    doorGx: 5,
-    doorGy: 10,
+    doorGx: 25,
+    doorGy: 30,
     description: 'Crafts and upgrades high-grade weapons and heavy armor for hunters.',
     serviceName: 'Weapon & Armor Crafting',
     currentVisitors: [],
@@ -61,12 +61,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 75,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 12,
-    gy: 8,
+    gx: 32,
+    gy: 28,
     width: 2,
     height: 2,
-    doorGx: 12,
-    doorGy: 10,
+    doorGx: 32,
+    doorGy: 30,
     description: 'Brews restorative HP and combat elixirs from monster essences.',
     serviceName: 'Potion Dispensing',
     currentVisitors: [],
@@ -82,12 +82,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 90,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 4,
-    gy: 13,
+    gx: 24,
+    gy: 33,
     width: 2,
     height: 2,
-    doorGx: 5,
-    doorGy: 15,
+    doorGx: 25,
+    doorGy: 35,
     description: 'Serves roast meat and frothy ale to recharge exhausted hunters.',
     serviceName: 'Food & Lodging',
     currentVisitors: [],
@@ -103,12 +103,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 100,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 12,
-    gy: 13,
+    gx: 32,
+    gy: 33,
     width: 2,
     height: 2,
-    doorGx: 12,
-    doorGy: 15,
+    doorGx: 32,
+    doorGy: 35,
     description: 'Martial school where hunters study and auto-upgrade combat skills.',
     serviceName: 'Skill Mastery',
     currentVisitors: [],
@@ -124,12 +124,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 60,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 8,
-    gy: 11,
+    gx: 28,
+    gy: 31,
     width: 2,
     height: 2,
-    doorGx: 8,
-    doorGy: 13,
+    doorGx: 28,
+    doorGy: 33,
     description: 'Buys all harvested monster trophies, fangs, and pelts for gold.',
     serviceName: 'Loot Exchange',
     currentVisitors: [],
@@ -145,12 +145,12 @@ export const INITIAL_BUILDINGS: Building[] = [
     expToNext: 70,
     totalTransactions: 0,
     lifetimeGold: 0,
-    gx: 8,
-    gy: 15,
+    gx: 28,
+    gy: 35,
     width: 2,
     height: 2,
-    doorGx: 8,
-    doorGy: 17,
+    doorGx: 28,
+    doorGy: 37,
     description: 'Tends to wounded hunters and resurrects fallen warriors from fields.',
     serviceName: 'Emergency Healing',
     currentVisitors: [],
@@ -159,21 +159,24 @@ export const INITIAL_BUILDINGS: Building[] = [
 ];
 
 // Town gates: East (Town Gate road) and South (Graveyard road)
-export const TOWN_GATE_POS = { gx: 18, gy: 10 };
-export const SOUTH_GATE_POS = { gx: 10, gy: 19 };
-export const SUMMON_PORTAL_POS = { gx: 9, gy: 2 };
+export const TOWN_GATE_POS = { gx: 38, gy: 30 };
+export const SOUTH_GATE_POS = { gx: 30, gy: 39 };
+export const SUMMON_PORTAL_POS = { gx: 29, gy: 22 };
 
 // Roam boundaries per hunting zone (monsters wander inside their home zone)
 export const ZONE_ROAM_BOUNDS: Record<1 | 2 | 3, { minGx: number; maxGx: number; minGy: number; maxGy: number }> = {
-  1: { minGx: 22, maxGx: 34, minGy: 2, maxGy: 16 }, // Whispering Forest
-  2: { minGx: 2, maxGx: 16, minGy: 22, maxGy: 34 }, // Gloomy Graveyard
-  3: { minGx: 22, maxGx: 36, minGy: 22, maxGy: 36 }, // Volcanic Ruins
+  1: { minGx: 42, maxGx: 54, minGy: 22, maxGy: 36 }, // Whispering Forest
+  2: { minGx: 22, maxGx: 36, minGy: 42, maxGy: 54 }, // Gloomy Graveyard
+  3: { minGx: 42, maxGx: 56, minGy: 42, maxGy: 56 }, // Volcanic Ruins
 };
 
 // Local save persistence
 export const SAVE_KEY = 'hunters-town-save-v1';
 const LEGACY_SAVE_KEY = 'evil-hunter-tycoon-save-v1';
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
+// Grid shift applied when migrating pre-shift (v1) saves: every settled
+// coordinate moves +20/+20 as town relocated NW→center.
+const SAVE_SHIFT = 20;
 
 // Random Name Generation
 const HUNTER_FIRST_NAMES = [
@@ -479,8 +482,8 @@ export class GameSimulation {
       stateTimer: 2.0,
       gx: SUMMON_PORTAL_POS.gx + (Math.random() - 0.5) * 1.5,
       gy: SUMMON_PORTAL_POS.gy + (Math.random() - 0.5) * 1.5,
-      targetGx: 9,
-      targetGy: 8,
+      targetGx: 29,
+      targetGy: 28,
       facing: 'SE',
       targetMonsterId: null,
       targetBuildingId: null,
@@ -684,17 +687,17 @@ export class GameSimulation {
     let gy = 0;
 
     if (zone === 1) {
-      // Whispering Forest: gx 22..34, gy 2..16
-      gx = 22 + Math.random() * 12;
-      gy = 2 + Math.random() * 14;
-    } else if (zone === 2) {
-      // Gloomy Graveyard: gx 2..16, gy 22..34
-      gx = 2 + Math.random() * 14;
-      gy = 22 + Math.random() * 12;
-    } else {
-      // Volcanic Ruins: gx 22..36, gy 22..36
-      gx = 22 + Math.random() * 14;
+      // Whispering Forest: gx 42..54, gy 22..36
+      gx = 42 + Math.random() * 12;
       gy = 22 + Math.random() * 14;
+    } else if (zone === 2) {
+      // Gloomy Graveyard: gx 22..36, gy 42..54
+      gx = 22 + Math.random() * 14;
+      gy = 42 + Math.random() * 12;
+    } else {
+      // Volcanic Ruins: gx 42..56, gy 42..56
+      gx = 42 + Math.random() * 14;
+      gy = 42 + Math.random() * 14;
     }
 
     let name = 'Forest Slime';
@@ -956,8 +959,8 @@ export class GameSimulation {
           // New arrivals register at Sanctuary Hall before their first hunt
           const hall = this.buildings.find(b => b.type === 'TOWN_HALL');
           hunter.state = 'REGISTERING';
-          hunter.targetGx = hall ? hall.doorGx : 9;
-          hunter.targetGy = hall ? hall.doorGy : 8;
+          hunter.targetGx = hall ? hall.doorGx : 29;
+          hunter.targetGy = hall ? hall.doorGy : 28;
         }
         break;
       }
@@ -1006,8 +1009,8 @@ export class GameSimulation {
             hunter.targetGy = desperate.gy;
           } else {
             // Wander in field
-            hunter.targetGx = 24 + Math.random() * 8;
-            hunter.targetGy = 8 + Math.random() * 8;
+            hunter.targetGx = 44 + Math.random() * 8;
+            hunter.targetGy = 28 + Math.random() * 8;
           }
         }
         break;
@@ -1058,8 +1061,8 @@ export class GameSimulation {
             monster = this.findDesperateTarget(hunter);
             if (!monster) {
               // Field truly empty: idle wander
-              hunter.targetGx = 22 + Math.random() * 10;
-              hunter.targetGy = 6 + Math.random() * 10;
+              hunter.targetGx = 42 + Math.random() * 10;
+              hunter.targetGy = 26 + Math.random() * 10;
               this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, hunter.speed * 40 * dt);
               break;
             }
@@ -1456,14 +1459,17 @@ export class GameSimulation {
   }
 
   /**
-   * Map region: 0 = town/transit (gx<=19 && gy<=19, gates included),
-   * 1 = forest (gx>19,gy<19), 2 = crypt (gx<19,gy>19), 3 = volcano
-   * (gx>19,gy>19). Region walls sit on row/col 19.
+   * Map region: 0 = town/transit (gx<=39 && gy<=39, gates included) plus
+   * the reserved expansion lands (northwest bands: town/transit-exempt,
+   * no zone-fit pressure, no transit targeting),
+   * 1 = forest (gx>39,gy<39), 2 = crypt (gx<39,gy>39), 3 = volcano
+   * (gx>39,gy>39). Region walls sit on row/col 39.
    */
   private zoneOf(gx: number, gy: number): 0 | 1 | 2 | 3 {
-    if (gx <= 19 && gy <= 19) return 0;
-    if (gx > 19 && gy < 19) return 1;
-    if (gx < 19 && gy > 19) return 2;
+    if (reserveAt(Math.floor(gx), Math.floor(gy)) !== null) return 0;
+    if (gx <= 39 && gy <= 39) return 0;
+    if (gx > 39 && gy < 39) return 1;
+    if (gx < 39 && gy > 39) return 2;
     return 3;
   }
 
@@ -1482,8 +1488,8 @@ export class GameSimulation {
   private returnToPlaza(hunter: Hunter) {
     hunter.state = 'RETURNING_TO_TOWN';
     hunter.targetBuildingId = null;
-    hunter.targetGx = 9;
-    hunter.targetGy = 9;
+    hunter.targetGx = 29;
+    hunter.targetGy = 29;
     hunter.stateTimer = 0;
   }
 
@@ -2114,12 +2120,12 @@ export class GameSimulation {
     if (survival > 0.80) {
       this.dynamicHp = Math.min(4, this.dynamicHp * 1.15);
       this.dynamicAtk = Math.min(4, this.dynamicAtk * 1.15);
-      this.addFloatingText('👹 The darkness grows stronger...', 28, 8, '#ef4444', 14);
+      this.addFloatingText('👹 The darkness grows stronger...', 48, 28, '#ef4444', 14);
       this.addLog('boss', `The wilds adapt to easy prey: beasts +15% HP/ATK (rolling survival ${(survival * 100).toFixed(0)}%).`);
     } else if (survival < 0.70) {
       this.dynamicHp = Math.max(0.4, this.dynamicHp * 0.87);
       this.dynamicAtk = Math.max(0.4, this.dynamicAtk * 0.87);
-      this.addFloatingText('🌤️ The realm breathes easier...', 9, 9, '#4ade80', 14);
+      this.addFloatingText('🌤️ The realm breathes easier...', 29, 29, '#4ade80', 14);
       this.addLog('boss', `The wilds relent: beasts −13% HP/ATK (rolling survival ${(survival * 100).toFixed(0)}%).`);
     }
   }
@@ -2385,7 +2391,10 @@ export class GameSimulation {
       const raw = window.localStorage.getItem(SAVE_KEY) ?? window.localStorage.getItem(LEGACY_SAVE_KEY);
       if (!raw) return null;
       const data = JSON.parse(raw);
-      if (!data || data.version !== SAVE_VERSION) return null;
+      if (!data || (data.version !== 1 && data.version !== SAVE_VERSION)) return null;
+      // Pre-shift (v1) saves store 0-39 coords: shift every persisted
+      // coordinate +20/+20 on load. V2 saves load unshifted.
+      const needsShift = data.version === 1;
 
       const sim = new GameSimulation(true);
       const num = (v: unknown, fallback: number) =>
@@ -2440,6 +2449,41 @@ export class GameSimulation {
         : JSON.parse(JSON.stringify(INITIAL_BUILDINGS));
       sim.logs = Array.isArray(data.logs) ? data.logs.slice(0, 100) : [];
 
+      // V1→V2 grid migration: town relocated +20/+20, so every persisted
+      // coordinate follows. Ids/logs/stocks/levels untouched.
+      if (needsShift) {
+        for (const h of sim.hunters) {
+          if (typeof h.gx === 'number' && Number.isFinite(h.gx)) h.gx += SAVE_SHIFT;
+          if (typeof h.gy === 'number' && Number.isFinite(h.gy)) h.gy += SAVE_SHIFT;
+          if (typeof h.targetGx === 'number' && Number.isFinite(h.targetGx)) h.targetGx += SAVE_SHIFT;
+          if (typeof h.targetGy === 'number' && Number.isFinite(h.targetGy)) h.targetGy += SAVE_SHIFT;
+        }
+        for (const b of sim.buildings) {
+          if (typeof b.gx === 'number' && Number.isFinite(b.gx)) b.gx += SAVE_SHIFT;
+          if (typeof b.gy === 'number' && Number.isFinite(b.gy)) b.gy += SAVE_SHIFT;
+          if (typeof b.doorGx === 'number' && Number.isFinite(b.doorGx)) b.doorGx += SAVE_SHIFT;
+          if (typeof b.doorGy === 'number' && Number.isFinite(b.doorGy)) b.doorGy += SAVE_SHIFT;
+        }
+        // Transient VFX aren't in fresh snapshots but may exist in
+        // hand-crafted saves — shift them too when present.
+        if (Array.isArray((data as { floatingTexts?: unknown }).floatingTexts)) {
+          sim.floatingTexts = (data as { floatingTexts: FloatingText[] }).floatingTexts;
+          for (const ft of sim.floatingTexts) {
+            if (typeof ft.x === 'number' && Number.isFinite(ft.x)) ft.x += SAVE_SHIFT;
+            if (typeof ft.y === 'number' && Number.isFinite(ft.y)) ft.y += SAVE_SHIFT;
+          }
+        }
+        if (Array.isArray((data as { skillVfxs?: unknown }).skillVfxs)) {
+          sim.skillVfxs = (data as { skillVfxs: SkillVFX[] }).skillVfxs;
+          for (const sv of sim.skillVfxs) {
+            if (typeof sv.startX === 'number' && Number.isFinite(sv.startX)) sv.startX += SAVE_SHIFT;
+            if (typeof sv.startY === 'number' && Number.isFinite(sv.startY)) sv.startY += SAVE_SHIFT;
+            if (typeof sv.targetX === 'number' && Number.isFinite(sv.targetX)) sv.targetX += SAVE_SHIFT;
+            if (typeof sv.targetY === 'number' && Number.isFinite(sv.targetY)) sv.targetY += SAVE_SHIFT;
+          }
+        }
+      }
+
       // Rescue pre-fix saves whose auto-director ran away to the 4x cap on
       // nursery kills (now excluded from the window): clamp stale values
       // above 2.0 so zone 2/3 stop reading as perma-too-hard. Placed after
@@ -2453,6 +2497,14 @@ export class GameSimulation {
 
       // Restore monsters, migrating older saves and clamping roamers home
       sim.monsters = Array.isArray(data.monsters) ? data.monsters : [];
+      if (needsShift) {
+        for (const m of sim.monsters) {
+          if (typeof m.gx === 'number' && Number.isFinite(m.gx)) m.gx += SAVE_SHIFT;
+          if (typeof m.gy === 'number' && Number.isFinite(m.gy)) m.gy += SAVE_SHIFT;
+          if (typeof m.targetGx === 'number' && Number.isFinite(m.targetGx)) m.targetGx += SAVE_SHIFT;
+          if (typeof m.targetGy === 'number' && Number.isFinite(m.targetGy)) m.targetGy += SAVE_SHIFT;
+        }
+      }
       for (const m of sim.monsters) {
         if (typeof m.roamPauseTimer !== 'number' || !Number.isFinite(m.roamPauseTimer)) {
           m.roamPauseTimer = Math.random() * 2;
@@ -2515,8 +2567,8 @@ export class GameSimulation {
             }
           }
         }
-        if (!Number.isFinite(h.gx) || !Number.isFinite(h.gy) || h.gx < -2 || h.gx > 42 || h.gy < -2 || h.gy > 42) {
-          h.gx = 9; h.gy = 9; // town plaza
+        if (!Number.isFinite(h.gx) || !Number.isFinite(h.gy) || h.gx < -2 || h.gx > 62 || h.gy < -2 || h.gy > 62) {
+          h.gx = 29; h.gy = 29; // town plaza
           h.targetMonsterId = null; h.targetBuildingId = null;
           h.state = 'WANDERING_TOWN'; h.stateTimer = 1.5; // hub re-evaluates on expiry
           rescued++;
