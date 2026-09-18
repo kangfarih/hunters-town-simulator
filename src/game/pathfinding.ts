@@ -71,6 +71,28 @@ export function tavernSeatPositions(gx: number, gy: number, capacity: number): {
   return seats;
 }
 
+/**
+ * Clinic bed grid positions: flank the clinic at (gx, gy), each within
+ * ~1.5 cells. Deterministic order so the nth recovering hunter (sorted by
+ * id) lies in the nth bed. Pure (no DOM).
+ */
+export function clinicBedPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
+  const offsets: Array<[number, number]> = [
+    [0.9, 0.5],
+    [-0.9, 0.5],
+    [0, 1.1],
+    [0.9, -0.6],
+    [-0.9, -0.6],
+    [0, -1.2],
+    [1.2, 1.0],
+    [-1.2, 1.0],
+  ];
+  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
+  const beds: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) beds.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
+  return beds;
+}
+
 const clampCell = (v: number, max: number) => Math.max(0, Math.min(max - 1, Math.round(v)));
 
 /** Nearest walkable cell to (cx, cy), spiral search. Falls back to input. */

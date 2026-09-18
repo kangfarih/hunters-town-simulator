@@ -839,7 +839,62 @@ export function createTableTexture(): Texture {
 }
 
 // --------------------------------------------------------------------------
-// 6. SKILL VFX & VISUAL EFFECTS
+// 6. CLINIC FURNITURE (small crisp pixel-art decor, ~24x20)
+// --------------------------------------------------------------------------
+
+/** Clinic cot: metal frame, white sheet, teal blanket, pillow. */
+export function createBedTexture(): Texture {
+  const w = 24;
+  const h = 20;
+  const canvas = createPixelCanvas(w, h);
+  const ctx = canvas.getContext('2d')!;
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(12, 17, 10, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bed legs
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(2, 14, 2, 3);
+  ctx.fillRect(20, 14, 2, 3);
+
+  // Metal frame
+  ctx.fillStyle = '#4b5563';
+  ctx.fillRect(1, 8, 22, 8);
+  // Headboard / footboard posts
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(1, 4, 2, 12);
+  ctx.fillRect(21, 4, 2, 12);
+  // Post highlights
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(1, 4, 1, 12);
+  ctx.fillRect(21, 4, 1, 12);
+
+  // White sheet / mattress
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(3, 9, 18, 5);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillRect(3, 12, 18, 2);
+
+  // Teal blanket (foot half)
+  ctx.fillStyle = '#0f766e';
+  ctx.fillRect(12, 9, 9, 5);
+  ctx.fillStyle = '#14b8a6';
+  ctx.fillRect(12, 9, 9, 1);
+
+  // Pillow at head
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(4, 9, 5, 4);
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fillRect(4, 12, 5, 1);
+
+  return Texture.from(canvas);
+}
+
+// --------------------------------------------------------------------------
+// 7. SKILL VFX & VISUAL EFFECTS
 // --------------------------------------------------------------------------
 
 export function createSkillVfxTexture(type: string): Texture {

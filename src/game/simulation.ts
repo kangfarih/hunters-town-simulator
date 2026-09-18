@@ -2223,8 +2223,8 @@ export class GameSimulation {
   }
 
   private findBestMonsterForHunter(hunter: Hunter): Monster | null {
-    // Pick the NEAREST monster in the level-appropriate zone
-    // (Lv11+ volcano, Lv6+ graveyard, else forest); nearest anywhere as fallback.
+    // Pick the best level-matched monster in the level-appropriate zone
+    // (Lv11+ volcano, Lv6+ graveyard, else forest); best match anywhere as fallback.
     let preferredZone: 1 | 2 | 3 = 1;
     if (hunter.level >= 11) preferredZone = 3;
     else if (hunter.level >= 6) preferredZone = 2;
@@ -2234,14 +2234,15 @@ export class GameSimulation {
       let bestScore = Infinity;
       for (const m of list) {
         const d = gridDistance(hunter.gx, hunter.gy, m.gx, m.gy);
-        // Spread hunters across prey: penalize already-claimed monsters so
-        // a lone nearby monster with several claimants loses to a slightly
-        // farther unclaimed one.
+        // Level-matched scoring: prefer similar-level prey over pure
+        // proximity, then spread hunters across prey by penalizing
+        // already-claimed monsters so a lone nearby monster with several
+        // claimants loses to a slightly farther unclaimed one.
         let claimants = 0;
         for (const h of this.hunters) {
           if (h.id !== hunter.id && h.targetMonsterId === m.id) claimants++;
         }
-        const score = d * (1 + 0.6 * claimants);
+        const score = (Math.abs(m.level - hunter.level) * 3 + d) * (1 + 0.6 * claimants);
         if (score < bestScore) {
           bestScore = score;
           best = m;
@@ -2254,7 +2255,7 @@ export class GameSimulation {
     const fairInZone = candidates.filter(m => !this.isTooHardFor(m, hunter));
     if (fairInZone.length > 0) return nearestIn(fairInZone);
 
-    // Fallback to the nearest fair fight anywhere (refuse suicide runs)
+    // Fallback to the best-matched fair fight anywhere (refuse suicide runs)
     const anyFair = this.monsters.filter(m => m.hp > 0 && !this.isTooHardFor(m, hunter));
     return anyFair.length > 0 ? nearestIn(anyFair) : null;
   }

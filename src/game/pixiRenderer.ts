@@ -1,15 +1,15 @@
 import { 
   Application, Container, Sprite, Graphics, Text, TextStyle, Texture 
 } from 'pixi.js';
-import { GameSimulation, TOWN_GATE_POS, SUMMON_PORTAL_POS, monsterLabel } from './simulation';
+import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel } from './simulation';
 import { 
   gridToScreen, screenToGrid, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
 } from './isometric';
-import { WALL_CELLS, GATE_CELLS, tavernSeatPositions } from './pathfinding';
+import { tavernSeatPositions, clinicBedPositions } from './pathfinding';
 import { 
   createIsoTileTexture, createHunterFrame, createMonsterFrame, 
   createBuildingTexture, createSkillVfxTexture,
-  createChairTexture, createTableTexture
+  createChairTexture, createTableTexture, createBedTexture
 } from './pixelArtTextures';
 import { CharacterClass, Hunter, Building } from '../types';
 
@@ -63,6 +63,10 @@ export class PixiRenderer {
   private chairTexture: Texture | null = null;
   private tableTexture: Texture | null = null;
   private tavernDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
+
+  // Clinic furniture decor (beds around each CLINIC building)
+  private bedTexture: Texture | null = null;
+  private clinicDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
 
   // Camera anchor: set once the renderer reports a real (non-zero) screen size,
   // so the town stays centered even if layout wasn't ready during init.
@@ -237,35 +241,6 @@ export class PixiRenderer {
     portalGfx.circle(portalPos.x, portalPos.y + 16, 16).fill({ color: 0x818cf8, alpha: 0.5 });
     portalGfx.circle(portalPos.x, portalPos.y + 16, 8).fill({ color: 0xc7d2fe, alpha: 0.8 });
     this.terrainContainer.addChild(portalGfx);
-
-    // Gate Archway
-    const gateGfx = new Graphics();
-    const gatePos = gridToScreen(TOWN_GATE_POS.gx, TOWN_GATE_POS.gy);
-    gateGfx.rect(gatePos.x - 20, gatePos.y - 10, 40, 6).fill({ color: 0x92400e, alpha: 0.9 });
-    gateGfx.rect(gatePos.x - 20, gatePos.y - 10, 6, 24).fill({ color: 0x78350f, alpha: 0.9 });
-    gateGfx.rect(gatePos.x + 14, gatePos.y - 10, 6, 24).fill({ color: 0x78350f, alpha: 0.9 });
-    this.terrainContainer.addChild(gateGfx);
-
-    // Region palisade walls + gate arches (matches pathfinding wall map)
-    const wallGfx = new Graphics();
-    for (const cell of WALL_CELLS) {
-      const p = gridToScreen(cell.x, cell.y);
-      // Ground shadow
-      wallGfx.ellipse(p.x, p.y + 14, 14, 6).fill({ color: 0x000000, alpha: 0.35 });
-      // Palisade log
-      wallGfx.rect(p.x - 4, p.y - 28, 8, 30).fill({ color: 0x5b3a1e, alpha: 1 });
-      wallGfx.rect(p.x - 4, p.y - 28, 8, 4).fill({ color: 0x8a5f30, alpha: 1 });
-      wallGfx.rect(p.x - 4, p.y - 28, 2, 30).fill({ color: 0x3a2412, alpha: 1 });
-    }
-    for (const cell of GATE_CELLS) {
-      const p = gridToScreen(cell.x, cell.y);
-      // Amber gate posts + lintel
-      wallGfx.rect(p.x - 14, p.y - 22, 5, 24).fill({ color: 0x92400e, alpha: 1 });
-      wallGfx.rect(p.x + 9, p.y - 22, 5, 24).fill({ color: 0x92400e, alpha: 1 });
-      wallGfx.rect(p.x - 16, p.y - 26, 32, 5).fill({ color: 0xb45309, alpha: 1 });
-      wallGfx.rect(p.x - 16, p.y - 26, 32, 2).fill({ color: 0xfbbf24, alpha: 0.9 });
-    }
-    this.terrainContainer.addChild(wallGfx);
   }
 
   // --------------------------------------------------------------------------
@@ -280,6 +255,9 @@ export class PixiRenderer {
 
     // 1b. Render Tavern Furniture (chairs + tables)
     this.renderTavernSeating();
+
+    // 1c. Render Clinic Beds
+    this.renderClinicBeds();
 
     // 2. Render Hunters
     this.renderHunters();
@@ -445,6 +423,74 @@ export class PixiRenderer {
     }
   }
 
+  /**
+   * Bed grid position for a recovering hunter, or null when they have no bed.
+   * Recovering hunters (RECOVERING_CLINIC with that clinic as targetBuildingId,
+   * sorted by id) lie in the clinic's beds; hunters beyond bed count
+   * (shouldn't happen via the capacity gate) render at their sim position.
+   */
+  private bedFor(hunter: Hunter): { x: number; y: number } | null {
+    if (hunter.state !== 'RECOVERING_CLINIC' || !hunter.targetBuildingId) return null;
+    const clinic = this.simulation.buildings.find(
+      b => b.id === hunter.targetBuildingId && b.type === 'CLINIC'
+    );
+    if (!clinic) return null;
+    const capacity = this.simulation.buildingCapacity(clinic);
+    const patients = this.simulation.hunters
+      .filter(h => h.state === 'RECOVERING_CLINIC' && h.targetBuildingId === clinic.id)
+      .map(h => h.id)
+      .sort();
+    const idx = patients.indexOf(hunter.id);
+    if (idx < 0) return null;
+    const beds = clinicBedPositions(clinic.gx, clinic.gy, capacity);
+    return idx < beds.length ? beds[idx] : null;
+  }
+
+  /**
+   * Clinic furniture decor: one bed per buildingCapacity(clinic). Cached
+   * per clinic id + level, rebuilt when capacity changes.
+   */
+  private renderClinicBeds() {
+    if (!this.bedTexture) this.bedTexture = createBedTexture();
+
+    const activeClinicIds = new Set<string>();
+    for (const b of this.simulation.buildings) {
+      if (b.type !== 'CLINIC') continue;
+      activeClinicIds.add(b.id);
+      const capacity = this.simulation.buildingCapacity(b);
+      const cached = this.clinicDecor.get(b.id);
+      if (cached && cached.capacity === capacity && cached.level === b.level) continue;
+
+      // Capacity changed (or first build): drop old sprites and rebuild.
+      if (cached) {
+        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
+        this.clinicDecor.delete(b.id);
+      }
+
+      const beds = clinicBedPositions(b.gx, b.gy, capacity);
+      const sprites: Sprite[] = [];
+      for (const bed of beds) {
+        const p = gridToScreen(bed.x, bed.y);
+        const sprite = new Sprite(this.bedTexture);
+        sprite.anchor.set(0.5, 0.85);
+        sprite.x = p.x;
+        sprite.y = p.y;
+        sprite.zIndex = (bed.x + bed.y) * 100 + 12;
+        this.entitiesContainer.addChild(sprite);
+        sprites.push(sprite);
+      }
+      this.clinicDecor.set(b.id, { capacity, level: b.level, sprites });
+    }
+
+    // Cleanup decor for removed clinics.
+    for (const [id, cached] of this.clinicDecor.entries()) {
+      if (!activeClinicIds.has(id)) {
+        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
+        this.clinicDecor.delete(id);
+      }
+    }
+  }
+
   private renderHunters() {
     const activeHunterIds = new Set(this.simulation.hunters.map(h => h.id));
 
@@ -461,16 +507,19 @@ export class PixiRenderer {
     this.simulation.hunters.forEach(hunter => {
       let hData = this.hunterSprites.get(hunter.id);
 
-      // Seated resters use their idle frame on the seat position.
+      // Seated resters use their idle frame on the seat position;
+      // clinic patients lie in their bed position (bed sprite beneath).
       const seat = this.seatFor(hunter);
-      const px = seat ? seat.x : hunter.gx;
-      const py = seat ? seat.y : hunter.gy;
+      const bed = seat ? null : this.bedFor(hunter);
+      const spot = seat ?? bed;
+      const px = spot ? spot.x : hunter.gx;
+      const py = spot ? spot.y : hunter.gy;
 
       // Determine action for frame lookup
       let action: 'idle' | 'walk' | 'attack' | 'cast' = 'idle';
-      if (!seat && hunter.isAttacking) {
+      if (!spot && hunter.isAttacking) {
         action = hunter.charClass === 'Sorcerer' ? 'cast' : 'attack';
-      } else if (!seat && (hunter.state === 'HUNTING' || hunter.state === 'TRAVELING_TO_HUNT' || hunter.state === 'RETURNING_TO_TOWN' || hunter.state === 'SPAWNING' || hunter.state === 'REGISTERING')) {
+      } else if (!spot && (hunter.state === 'HUNTING' || hunter.state === 'TRAVELING_TO_HUNT' || hunter.state === 'RETURNING_TO_TOWN' || hunter.state === 'SPAWNING' || hunter.state === 'REGISTERING')) {
         action = 'walk';
       }
 
@@ -518,7 +567,8 @@ export class PixiRenderer {
 
       // Attack lunge: punch a few pixels toward the facing, then recoil.
       // attackAnimTimer counts 0.35 -> 0, so punch peaks mid-swing.
-      if (hunter.isAttacking) {
+      // (Seated/bedded hunters never attack, so no lunge off their spot.)
+      if (!spot && hunter.isAttacking) {
         const swingT = Math.max(0, Math.min(1, hunter.attackAnimTimer / 0.35));
         const punch = Math.sin((1 - swingT) * Math.PI) * 9;
         const dirX = (hunter.facing === 'SE' || hunter.facing === 'NE') ? 1 : -1;
@@ -859,8 +909,15 @@ export class PixiRenderer {
       }
     }
     this.tavernDecor.clear();
+    for (const cached of this.clinicDecor.values()) {
+      for (const s of cached.sprites) {
+        try { s.destroy(); } catch { /* ignore */ }
+      }
+    }
+    this.clinicDecor.clear();
     this.chairTexture = null;
     this.tableTexture = null;
+    this.bedTexture = null;
   }
 
   public destroy() {
