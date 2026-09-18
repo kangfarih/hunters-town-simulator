@@ -2440,6 +2440,17 @@ export class GameSimulation {
         : JSON.parse(JSON.stringify(INITIAL_BUILDINGS));
       sim.logs = Array.isArray(data.logs) ? data.logs.slice(0, 100) : [];
 
+      // Rescue pre-fix saves whose auto-director ran away to the 4x cap on
+      // nursery kills (now excluded from the window): clamp stale values
+      // above 2.0 so zone 2/3 stop reading as perma-too-hard. Placed after
+      // the log restore so the recalibration notice isn't wiped. num()
+      // above already sanitized non-finite inputs.
+      if (sim.dynamicHp > 2 || sim.dynamicAtk > 2) {
+        sim.dynamicHp = Math.min(sim.dynamicHp, 2);
+        sim.dynamicAtk = Math.min(sim.dynamicAtk, 2);
+        sim.addLog('boss', 'The wilds recalibrate: stale beast power from an old season fades (capped at ×2.0).');
+      }
+
       // Restore monsters, migrating older saves and clamping roamers home
       sim.monsters = Array.isArray(data.monsters) ? data.monsters : [];
       for (const m of sim.monsters) {
