@@ -5,7 +5,7 @@ import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel } from './simulation';
 import { 
   gridToScreen, screenToGrid, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
 } from './isometric';
-import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS } from './pathfinding';
+import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS, WALL_CELLS } from './pathfinding';
 import { 
   createIsoTileTexture, createHunterFrame, createMonsterFrame, 
   createBuildingTexture, createSkillVfxTexture,
@@ -283,6 +283,21 @@ export class PixiRenderer {
       label.alpha = 0.6;
       this.terrainContainer.addChild(label);
     });
+
+    // Region border palisades (static, once). Gate cells are absent from
+    // WALL_CELLS by construction (isWallCell excludes them), so openings
+    // render as plain gaps — no gate visuals of any kind.
+    const wallGfx = new Graphics();
+    for (const cell of WALL_CELLS) {
+      const p = gridToScreen(cell.x, cell.y);
+      // Ground shadow ellipse
+      wallGfx.ellipse(p.x, p.y + 16, 20, 9).fill({ color: 0x000000, alpha: 0.3 });
+      // Palisade log: dark outline, mid-brown body, light top edge
+      wallGfx.rect(p.x - 10, p.y - 14, 20, 30).fill({ color: 0x3f2a18 });
+      wallGfx.rect(p.x - 8, p.y - 12, 16, 26).fill({ color: 0x8b5a2b });
+      wallGfx.rect(p.x - 8, p.y - 12, 16, 5).fill({ color: 0xd9a066 });
+    }
+    this.terrainContainer.addChild(wallGfx);
   }
 
   // --------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Settings, Skull, HeartPulse, Swords, RotateCcw, AlertTriangle, Bug, Gauge, Minus, Plus } from 'lucide-react';
-import { GameSimulation } from '../game/simulation';
+import { GameSimulation, DEFAULT_AGENT_CONFIG } from '../game/simulation';
 
 interface WorldConfigMenuProps {
   simulation: GameSimulation;
@@ -14,10 +14,11 @@ const Stepper: React.FC<{
   max: number;
   onChange: (v: number) => void;
   accent: string;
-}> = ({ value, min, max, onChange, accent }) => (
+  step?: number;
+}> = ({ value, min, max, onChange, accent, step = 1 }) => (
   <div className="flex items-center gap-2">
     <button
-      onClick={() => onChange(value - 1)}
+      onClick={() => onChange(value - step)}
       disabled={value <= min}
       className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
     >
@@ -25,7 +26,7 @@ const Stepper: React.FC<{
     </button>
     <span className={`flex-1 text-center text-lg font-black font-mono ${accent}`}>{value}</span>
     <button
-      onClick={() => onChange(value + 1)}
+      onClick={() => onChange(value + step)}
       disabled={value >= max}
       className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
     >
@@ -44,6 +45,11 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
   const [difficulty, setDifficultyState] = useState(simulation.difficulty);
   const [population, setPopulationState] = useState(simulation.monsterPopulation);
   const [autoDirector, setAutoDirectorState] = useState(simulation.autoDirector);
+  const [retreatPct, setRetreatPct] = useState(Math.round(simulation.agentConfig.retreatHpFrac * 100));
+  const [dangerHits, setDangerHits] = useState(simulation.agentConfig.dangerHits);
+  const [grayGap, setGrayGap] = useState(simulation.agentConfig.grayGap);
+  const [huntDrive, setHuntDrive] = useState(Math.round(simulation.agentConfig.huntBaseline * 100));
+  const [tavernMood, setTavernMood] = useState(simulation.agentConfig.tavernMood);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -52,6 +58,11 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
       setDifficultyState(simulation.difficulty);
       setPopulationState(simulation.monsterPopulation);
       setAutoDirectorState(simulation.autoDirector);
+      setRetreatPct(Math.round(simulation.agentConfig.retreatHpFrac * 100));
+      setDangerHits(simulation.agentConfig.dangerHits);
+      setGrayGap(simulation.agentConfig.grayGap);
+      setHuntDrive(Math.round(simulation.agentConfig.huntBaseline * 100));
+      setTavernMood(simulation.agentConfig.tavernMood);
     }, 500);
     return () => clearInterval(interval);
   }, [simulation]);
@@ -70,6 +81,14 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
     simulation.autoDirector = !simulation.autoDirector;
     setAutoDirectorState(simulation.autoDirector);
     simulation.saveToLocalStorage();
+  };
+
+  const syncAgent = () => {
+    setRetreatPct(Math.round(simulation.agentConfig.retreatHpFrac * 100));
+    setDangerHits(simulation.agentConfig.dangerHits);
+    setGrayGap(simulation.agentConfig.grayGap);
+    setHuntDrive(Math.round(simulation.agentConfig.huntBaseline * 100));
+    setTavernMood(simulation.agentConfig.tavernMood);
   };
 
   const kills = simulation.totalMonstersDefeated;
@@ -184,6 +203,57 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
             <div className="mt-1.5 p-2 rounded-xl bg-slate-800/50 border border-slate-700/50 text-[11px] text-slate-300 flex justify-between">
               <span>Untouched hunters (never downed)</span>
               <span className="font-mono font-bold text-slate-100">{untouched} / {simulation.hunters.length}</span>
+            </div>
+          </div>
+
+          {/* Agent behavior */}
+          <div>
+            <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+              <Settings className="w-3.5 h-3.5 text-cyan-300" /> Agent Behavior
+            </h4>
+            <div className="p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 space-y-3">
+              <div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-300 mb-1">
+                  <span>Retreat HP %</span><span className="font-mono text-cyan-300">{retreatPct}%</span>
+                </div>
+                <Stepper value={retreatPct} min={5} max={50} step={5} onChange={v => { simulation.updateAgentConfig({ retreatHpFrac: v / 100 }); syncAgent(); }} accent="text-cyan-300" />
+                <p className="text-[10px] text-slate-500 mt-1">Flee to the clinic below this HP — higher = safer hunters.</p>
+              </div>
+              <div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-300 mb-1">
+                  <span>Bravery min-hits</span><span className="font-mono text-cyan-300">{dangerHits}</span>
+                </div>
+                <Stepper value={dangerHits} min={2} max={12} onChange={v => { simulation.updateAgentConfig({ dangerHits: v }); syncAgent(); }} accent="text-cyan-300" />
+                <p className="text-[10px] text-slate-500 mt-1">Fights survivable for fewer hits read as too-hard — lower = braver.</p>
+              </div>
+              <div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-300 mb-1">
+                  <span>Gray gap</span><span className="font-mono text-cyan-300">{grayGap}</span>
+                </div>
+                <Stepper value={grayGap} min={2} max={6} onChange={v => { simulation.updateAgentConfig({ grayGap: v }); syncAgent(); }} accent="text-cyan-300" />
+                <p className="text-[10px] text-slate-500 mt-1">Level gap at/above which kills pay nothing — higher = longer leveling tail.</p>
+              </div>
+              <div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-300 mb-1">
+                  <span>Hunt drive</span><span className="font-mono text-cyan-300">{huntDrive}</span>
+                </div>
+                <Stepper value={huntDrive} min={20} max={80} step={5} onChange={v => { simulation.updateAgentConfig({ huntBaseline: v / 100 }); syncAgent(); }} accent="text-cyan-300" />
+                <p className="text-[10px] text-slate-500 mt-1">How much hunters love the field — higher = fewer town trips.</p>
+              </div>
+              <div>
+                <div className="flex justify-between text-[11px] font-bold text-slate-300 mb-1">
+                  <span>Tavern mood</span><span className="font-mono text-cyan-300">{tavernMood}</span>
+                </div>
+                <Stepper value={tavernMood} min={10} max={100} step={5} onChange={v => { simulation.updateAgentConfig({ tavernMood: v }); syncAgent(); }} accent="text-cyan-300" />
+                <p className="text-[10px] text-slate-500 mt-1">Mood below this sends hunters for a drink — lower = fewer tavern trips.</p>
+              </div>
+              <button
+                onClick={() => { simulation.updateAgentConfig({ ...DEFAULT_AGENT_CONFIG }); syncAgent(); }}
+                className="w-full py-2 rounded-xl bg-transparent hover:bg-cyan-500/10 border border-cyan-400/60 text-cyan-200 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reset behavior to defaults
+              </button>
             </div>
           </div>
 

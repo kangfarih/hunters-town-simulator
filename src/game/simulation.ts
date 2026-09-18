@@ -178,6 +178,42 @@ const SAVE_VERSION = 2;
 // coordinate moves +20/+20 as town relocated NW→center.
 const SAVE_SHIFT = 20;
 
+// Hunter-brain tuning knobs (persisted, live-tunable from World Config).
+// retreatHpFrac: fraction of effective max HP below which a hunting hunter
+//   retreats to the clinic. dangerHits: minimum hits-to-die for a fight to
+//   read as fair (lower = braver). grayGap: level gap at/above which kills
+//   pay no spoils. huntBaseline: post-kill utility the hunt itself scores —
+//   town needs must outscore it to interrupt the field. tavernMood: mood
+//   points (0-100) below which the tavern errand scores nonzero.
+export interface AgentConfig {
+  retreatHpFrac: number;
+  dangerHits: number;
+  grayGap: number;
+  huntBaseline: number;
+  tavernMood: number;
+}
+
+export const DEFAULT_AGENT_CONFIG: AgentConfig = {
+  retreatHpFrac: 0.20,
+  dangerHits: 6,
+  grayGap: 3,
+  huntBaseline: 0.5,
+  tavernMood: 65,
+};
+
+/** Clamp a (possibly foreign) agent-config blob into valid ranges. */
+export function clampAgentConfig(cfg: Partial<AgentConfig>): AgentConfig {
+  const num = (v: unknown, fallback: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+  return {
+    retreatHpFrac: Math.min(0.5, Math.max(0.05, num(cfg.retreatHpFrac, DEFAULT_AGENT_CONFIG.retreatHpFrac))),
+    dangerHits: Math.min(12, Math.max(2, Math.round(num(cfg.dangerHits, DEFAULT_AGENT_CONFIG.dangerHits)))),
+    grayGap: Math.min(6, Math.max(2, Math.round(num(cfg.grayGap, DEFAULT_AGENT_CONFIG.grayGap)))),
+    huntBaseline: Math.min(0.9, Math.max(0.1, num(cfg.huntBaseline, DEFAULT_AGENT_CONFIG.huntBaseline))),
+    tavernMood: Math.min(100, Math.max(10, num(cfg.tavernMood, DEFAULT_AGENT_CONFIG.tavernMood))),
+  };
+}
+
 // Random Name Generation
 const HUNTER_FIRST_NAMES = [
   'Arthur', 'Kaelen', 'Valkor', 'Lyra', 'Seraphina', 'Garrick', 'Rowan', 
@@ -291,6 +327,9 @@ export class GameSimulation {
 
   // World difficulty level 1-10 (5 = standard). Scales new spawns.
   public difficulty: number = 5;
+
+  // Hunter-brain tuning knobs (persisted, live-tunable from World Config).
+  public agentConfig: AgentConfig = { ...DEFAULT_AGENT_CONFIG };
 
   // Monster population: total concurrent monster target (3-40),
   // split across forest/crypt/volcano at roughly 6/5/3 weights.
@@ -431,6 +470,16 @@ export class GameSimulation {
     this.difficulty = lv;
     const m = GameSimulation.difficultyMultipliers(lv);
     this.addLog('upgrade', `World difficulty set to ${lv}: beasts HP ×${m.hp.toFixed(1)}, ATK ×${m.atk.toFixed(1)}, loot ×${m.reward.toFixed(1)}. Applies to newly spawned monsters.`);
+    this.saveToLocalStorage();
+  }
+
+  /** Patch hunter-brain tuning knobs (clamped), persist, and log. */
+  public updateAgentConfig(patch: Partial<AgentConfig>) {
+    const before = JSON.stringify(this.agentConfig);
+    this.agentConfig = clampAgentConfig({ ...this.agentConfig, ...patch });
+    if (JSON.stringify(this.agentConfig) === before) return;
+    const c = this.agentConfig;
+    this.addLog('upgrade', `Agent behavior tuned: retreat ${Math.round(c.retreatHpFrac * 100)}% HP · bravery ${c.dangerHits} hits · gray gap ${c.grayGap} · hunt drive ${Math.round(c.huntBaseline * 100)} · tavern mood ${c.tavernMood}.`);
     this.saveToLocalStorage();
   }
 
@@ -791,7 +840,7 @@ export class GameSimulation {
     expReward = Math.max(1, Math.round(expReward * diff.reward));
     goldReward = Math.max(1, Math.round(goldReward * diff.reward));
 
-    // Auto-director scaling (compounds with difficulty, clamped 0.4x-4x).
+    // Auto-director scaling (compounds with difficulty, clamped 0.4x-3x).
     // Zone 1 (forest nursery) only feels half the swing so lowbies
     // always have something fair to cut their teeth on.
     const zoneDamp = zone === 1 ? 0.5 : 1;
@@ -904,6 +953,12 @@ export class GameSimulation {
 
     // 6. Monster Repopulation Check
     this.checkMonsterRepopulation();
+
+    // 7. Auto-director heartbeat: lets the time-based eval (120s/10
+    // outcomes) and the starvation drift (>180s/<10 outcomes) fire on
+    // schedule even when combat outcomes dry up (e.g. roster farming
+    // gray zone-1 prey that never feeds the director window).
+    this.evaluateDirector();
   }
 
   private spawnBoss() {
@@ -1018,7 +1073,7 @@ export class GameSimulation {
 
       case 'HUNTING': {
         // Check health first - if critical, auto retreat to town clinic!
-        if (hunter.hp < this.effectiveMaxHp(hunter) * 0.20) {
+        if (hunter.hp < this.effectiveMaxHp(hunter) * this.agentConfig.retreatHpFrac) {
           this.retreatToTown(hunter, 'low HP');
           break;
         }
@@ -1086,8 +1141,8 @@ export class GameSimulation {
         const monster = this.monsters.find(m => m.id === hunter.targetMonsterId);
         if (!monster || monster.hp <= 0) {
           hunter.targetMonsterId = null;
-          // Post-kill utility routing: needs must outscore the hunt (0.5)
-          // to earn the interruption. Lab/forge/clinic never interrupt the
+          // Post-kill utility routing: needs must outscore the hunt
+          // (cfg.huntBaseline) to earn the interruption. Lab/forge/clinic never interrupt the
           // field (restock via town trips; clinic-critical is the HP<20%
           // hard retreat in HUNTING). Bags-full falls out of sell=1.0
           // naturally; sell always wins ties via the >= chain below.
@@ -1102,17 +1157,44 @@ export class GameSimulation {
           // the zone (transit=0.6). Low mood never interrupts the field —
           // it self-corrects via weaker combat → faster HP loss → clinic
           // retreat → town-hub tavern chain. Academy (≤0.45) always defers.
+          // Wound-wall escape below: a bleeding hunter whose own zone is
+          // structurally walled heals instead of parking on gray prey.
           // Ascending priority with >= so the later (higher-priority)
           // entry wins ties: transit < academy < sell; hunt is base.
           let best: 'sell' | 'academy' | 'transit' | 'hunt' = 'hunt';
-          let bestU = 0.5;
+          let bestU = this.agentConfig.huntBaseline;
           if (transitU >= bestU) { best = 'transit'; bestU = transitU; }
           if (s.academy >= bestU) { best = 'academy'; bestU = s.academy; }
           if (s.sell >= bestU) { best = 'sell'; bestU = s.sell; }
           if (best === 'sell') this.returnToTownToSell(hunter);
           else if (best === 'academy') this.returnToAcademy(hunter);
           else if (best === 'transit') this.returnToPlaza(hunter);
-          else hunter.state = 'HUNTING';
+          else {
+            // Wound-wall escape: the hunter's own zone just read as empty of
+            // fair prey while they are bleeding (clinic knee 0.7, mirrors
+            // scoreNeeds) AND the zone is structurally walled (alive count
+            // at target — not a transient repop dip, which refills in ~a
+            // tick) AND the fallback is a progression dead end (nothing
+            // fair, or gray: diff ≥ 3 pays no spoils). Such walls reopen
+            // with a heal ~9 times in 10, so retreat to a real errand
+            // instead of parking in the forest on gray prey. Healed hunters
+            // re-enter through the town hub, which picks fair pref-zone
+            // prey (no ping-pong: fires only on a walled zone, and
+            // productive fair fallbacks still hold the field).
+            const pref = this.preferredZone(hunter.level);
+            const inPref = this.monsters.filter(m => m.zone === pref && m.hp > 0);
+            const targets = this.populationTargets();
+            const atTarget = inPref.length >= (pref === 1 ? targets.z1 : pref === 2 ? targets.z2 : targets.z3);
+            const fairPref = inPref.filter(m => !this.isTooHardFor(m, hunter));
+            if (fairPref.length === 0 && atTarget && hunter.hp < this.effectiveMaxHp(hunter) * 0.7) {
+              const fallback = this.findBestMonsterForHunter(hunter);
+              if (!fallback || (!fallback.isBoss && hunter.level - fallback.level >= this.agentConfig.grayGap)) {
+                this.retreatToTown(hunter, 'wounds');
+                break;
+              }
+            }
+            hunter.state = 'HUNTING';
+          }
           break;
         }
 
@@ -1272,14 +1354,19 @@ export class GameSimulation {
 
   /**
    * Danger assessment: true if the monster would mulch the hunter
-   * (dead in under ~6 hits) or vastly out-levels them. Hunters refuse
-   * such fights and go gear up in town instead — if they can afford to.
+   * (dead in under ~dangerHits hits, lower = braver) or vastly out-levels
+   * them. Hunters refuse such fights and go gear up in town instead — if
+   * they can afford to. Carried elixirs count toward survivability: each
+   * one is +35% maxHp of potential in-combat healing, so an elixir-rich
+   * hunter (e.g. a Lv.8 carrying brews) reads a crypt fight as fair where
+   * a raw-HP test would pin them in the forest on gray prey forever.
    */
   public isTooHardFor(monster: Monster, hunter: Hunter): boolean {
     if (monster.level > hunter.level + 4) return true;
     const estHit = monster.atk - this.effectiveDef(hunter) * 0.5;
     if (estHit <= 0) return false;
-    return hunter.hp / estHit < 6;
+    const effectiveHp = hunter.hp + 0.35 * this.effectiveMaxHp(hunter) * hunter.elixirs;
+    return effectiveHp / estHit < this.agentConfig.dangerHits;
   }
 
   /** True when the hunter could actually improve in town (gear or training). */
@@ -1362,7 +1449,7 @@ export class GameSimulation {
     hunter.killCount++;
     // Nursery kills don't feed the auto-director: zone-1 spawns only feel
     // half the dynamic swing (zoneDamp 0.5), so counting ~98% forest kills
-    // drives survival >80% → buffs to the 4x cap that zone 2/3 feel fully.
+    // drives survival >80% → buffs to the 3x cap that zone 2/3 feel fully.
     // On-level crypt fights then read as mulch (e.g. Lv8 vs ghoul at 3.2
     // hits-to-die < 6) and isTooHardFor pins everyone in the forest.
     if (monster.zone !== 1) {
@@ -1377,22 +1464,43 @@ export class GameSimulation {
       this.addLog('boss', `${hunter.name} defeated the Evil Lich Lord! The realm is temporarily purified.`, hunter.name);
     }
 
-    // Distribute Rewards
-    hunter.gold += monster.goldReward;
-    this.townGold += Math.round(monster.goldReward * this.townTaxRate()); // Town tax
+    // Graduated spoils: overleveled hunters earn diminished rewards so they
+    // must hunt at grade. Bosses always pay full rewards regardless of gap.
+    // With gray gap G: diff <= G-3: full exp/drops/gold. diff == G-2: 50%
+    // exp (rounded). diff == G-1: 25% exp (rounded). diff >= G (non-boss):
+    // NOTHING — no exp, drops, gold, or town tax. Kills still count and the
+    // monster is still removed. (G=3 reproduces the classic curve exactly.)
+    const levelDiff = hunter.level - monster.level;
+    const G = this.agentConfig.grayGap;
+    if (monster.isBoss || levelDiff <= G - 3) {
+      // Distribute Rewards
+      hunter.gold += monster.goldReward;
+      this.townGold += Math.round(monster.goldReward * this.townTaxRate()); // Town tax
 
-    // Collect Loot Drop
-    monster.drops.forEach(drop => {
-      hunter.inventory.push({ ...drop });
-    });
+      // Collect Loot Drop
+      monster.drops.forEach(drop => {
+        hunter.inventory.push({ ...drop });
+      });
 
-    // Gray EXP: prey 5+ levels below the hunter teaches nothing (bosses
-    // always count). Gold, loot, and town tax are untouched.
-    if (monster.isBoss || hunter.level - monster.level < 5) {
       this.addFloatingText(`+${monster.expReward} EXP`, hunter.gx, hunter.gy, '#a855f7', 12);
       this.gainExp(hunter, monster.expReward);
+    } else if (levelDiff === G - 2 || levelDiff === G - 1) {
+      const scaledExp = Math.round(monster.expReward * (levelDiff === G - 2 ? 0.5 : 0.25));
+      // Distribute Rewards
+      hunter.gold += monster.goldReward;
+      this.townGold += Math.round(monster.goldReward * this.townTaxRate()); // Town tax
+
+      // Collect Loot Drop
+      monster.drops.forEach(drop => {
+        hunter.inventory.push({ ...drop });
+      });
+
+      if (scaledExp > 0) {
+        this.addFloatingText(`+${scaledExp} EXP (diminished)`, hunter.gx, hunter.gy, '#a855f7', 12);
+        this.gainExp(hunter, scaledExp);
+      }
     } else {
-      this.addFloatingText('+0 EXP (prey too weak)', hunter.gx, hunter.gy, '#6b7280', 11);
+      this.addFloatingText('No spoils — prey too weak', hunter.gx, hunter.gy, '#6b7280', 11);
     }
 
     // Remove monster
@@ -1401,6 +1509,24 @@ export class GameSimulation {
       this.monsters.splice(index, 1);
     }
     this.pathCache.delete(monster.id);
+
+    // Gray-kill correction: a no-spoils kill (non-boss, hunter 3+ levels
+    // above the dead prey) means the hunter is camping below grade. Retarget
+    // with an unpenalized lens restricted to the preferred zone: if fair
+    // pref-zone prey exists, walk straight there (even if claimed — sharing
+    // is allowed, killer takes rewards), with no town leg so there is no
+    // ping-pong risk. Otherwise leave targeting alone and fall through to
+    // the normal penalized routing (transit/gear-up/wander) on the next tick.
+    if (!monster.isBoss && hunter.level - monster.level >= this.agentConfig.grayGap) {
+      const pref = this.preferredZone(hunter.level);
+      const unpenalized = this.findBestMonsterForHunter(hunter, true);
+      if (unpenalized && unpenalized.zone === pref) {
+        hunter.targetMonsterId = unpenalized.id;
+        hunter.state = 'HUNTING';
+        hunter.targetGx = unpenalized.gx;
+        hunter.targetGy = unpenalized.gy;
+      }
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -1589,9 +1715,10 @@ export class GameSimulation {
   /**
    * Utility-AI need scorer: every town errand (plus the hunt itself)
    * returns a utility in [0,1]. Callers interrupt hunting only when a
-   * need outscores the hunt baseline (0.5) — proportionate needs beat
-   * hard-priority chains, so a lone skill point (≤0.45) never yanks a
-   * healthy hunter off the field; it batches into the next real town trip.
+   * need outscores the hunt baseline (cfg.huntBaseline) — proportionate
+   * needs beat hard-priority chains, so a lone skill point (≤0.45) never
+   * yanks a healthy hunter off the field; it batches into the next real
+   * town trip.
    * Shop availability mirrors the door/purchase gates exactly (need +
    * gold + town-materials affordability), so a nonzero lab/forge score is
    * always actionable: materials are consumed at completion, so without
@@ -1613,15 +1740,16 @@ export class GameSimulation {
     const tonicNeed = Math.max(0, this.tonicCapacity() - hunter.tonics);
     const tonicOk = lab && tonicNeed > 0 && hunter.gold >= (20 + lab.level * 5) && this.totalMaterials() >= 1;
     const forgeOk = forge && this.totalMaterials() >= 2 && this.canAffordForgeUpgrade(hunter);
+    const tavernFrac = this.agentConfig.tavernMood / 100;
     return {
       sell: hunter.inventory.length >= hunter.maxInventorySlots ? 1.0 : bagU * bagU * 0.4,
-      tavern: moodU < 0.65 ? (0.65 - moodU) / 0.65 : 0,            // town: <65 goes, lower = more urgent
+      tavern: moodU < tavernFrac ? (tavernFrac - moodU) / tavernFrac : 0,            // town: <tavernMood goes, lower = more urgent
       lab: (labOk || tonicOk) ? 0.2 + 0.6 * Math.max(elixirNeed / Math.max(1, this.elixirCapacity()), tonicNeed / Math.max(1, this.tonicCapacity())) : 0,
       forge: forgeOk ? 0.5 : 0,
       academy: hunter.skillPoints > 0 ? Math.min(0.45, 0.35 + 0.05 * hunter.skillPoints) : 0,  // NEVER beats a healthy hunt alone
       clinic: hpU < 0.7 ? (0.7 - hpU) / 0.7 : 0,
       transit: 0,   // filled by caller (field only)
-      hunt: 0.5,    // baseline: needs must earn the interruption
+      hunt: this.agentConfig.huntBaseline,    // baseline: needs must earn the interruption
     };
   }
 
@@ -2103,34 +2231,54 @@ export class GameSimulation {
   /**
    * Auto-director: every 30 combat outcomes (or every 2 sim-minutes with
    * at least 10), compare rolling survival against the 70-80% target band
-   * and scale future spawns. Buffs and nerfs compound but clamp at 0.4x-4x
+   * and scale future spawns. Buffs and nerfs compound but clamp at 0.4x-3x
    * so the world stays sane. The time-based fallback keeps the director
    * responsive even when kills dry up (e.g. hunters hiding from brutes).
+   * The starvation drift covers the window going fully quiet (e.g. the
+   * whole roster farming gray zone-1 prey, which never feeds the window):
+   * with no evaluable outcomes for over 3 sim-minutes, beast power eases
+   * 15% toward 1.0 so stat-walled zones can thaw instead of stalemating.
    */
   private evaluateDirector() {
     if (!this.autoDirector || this.hunters.length === 0) return;
     const total = this.windowKills + this.windowDeaths;
     const timeBased = this.simTime - this.lastDirectorEval > 120 && total >= 10;
-    if (total < 30 && !timeBased) return;
+    if (total < 30 && !timeBased) {
+      // Starvation drift: neither the 30-outcome nor the time-based eval
+      // can run (window starved). Ease both dynamics 15% toward 1.0 so a
+      // freeze at high beast power always has a path down.
+      if (this.simTime - this.lastDirectorEval > 180 && total < 10) {
+        const prevHp = this.dynamicHp;
+        const prevAtk = this.dynamicAtk;
+        this.dynamicHp = 1 + (this.dynamicHp - 1) * 0.85;
+        this.dynamicAtk = 1 + (this.dynamicAtk - 1) * 0.85;
+        this.lastDirectorEval = this.simTime;
+        // Log only on a meaningful move: avoids spam once settled near 1.0.
+        if (Math.abs(this.dynamicHp - prevHp) > 0.02 || Math.abs(this.dynamicAtk - prevAtk) > 0.02) {
+          this.addLog('boss', 'The wilds grow complacent with no worthy prey: beasts ease.');
+        }
+      }
+      return;
+    }
     this.lastDirectorEval = this.simTime;
     const survival = this.windowKills / total;
     this.windowKills = 0;
     this.windowDeaths = 0;
 
     if (survival > 0.80) {
-      this.dynamicHp = Math.min(4, this.dynamicHp * 1.15);
-      this.dynamicAtk = Math.min(4, this.dynamicAtk * 1.15);
+      this.dynamicHp = Math.min(3, this.dynamicHp * 1.12);
+      this.dynamicAtk = Math.min(3, this.dynamicAtk * 1.12);
       this.addFloatingText('👹 The darkness grows stronger...', 48, 28, '#ef4444', 14);
-      this.addLog('boss', `The wilds adapt to easy prey: beasts +15% HP/ATK (rolling survival ${(survival * 100).toFixed(0)}%).`);
+      this.addLog('boss', `The wilds adapt to easy prey: beasts +12% HP/ATK (rolling survival ${(survival * 100).toFixed(0)}%).`);
     } else if (survival < 0.70) {
-      this.dynamicHp = Math.max(0.4, this.dynamicHp * 0.87);
-      this.dynamicAtk = Math.max(0.4, this.dynamicAtk * 0.87);
+      this.dynamicHp = Math.max(0.4, this.dynamicHp * 0.89);
+      this.dynamicAtk = Math.max(0.4, this.dynamicAtk * 0.89);
       this.addFloatingText('🌤️ The realm breathes easier...', 29, 29, '#4ade80', 14);
-      this.addLog('boss', `The wilds relent: beasts −13% HP/ATK (rolling survival ${(survival * 100).toFixed(0)}%).`);
+      this.addLog('boss', `The wilds relent: beasts −11% HP/ATK (rolling survival ${(survival * 100).toFixed(0)}%).`);
     }
   }
 
-  private findBestMonsterForHunter(hunter: Hunter): Monster | null {
+  private findBestMonsterForHunter(hunter: Hunter, ignoreClaims = false): Monster | null {
     // Pick the best level-matched monster in the level-appropriate zone
     // (Lv11+ volcano, Lv6+ graveyard, else forest); best match anywhere as fallback.
     let preferredZone: 1 | 2 | 3 = 1;
@@ -2145,10 +2293,13 @@ export class GameSimulation {
         // Level-matched scoring: prefer similar-level prey over pure
         // proximity, then spread hunters across prey by penalizing
         // already-claimed monsters so a lone nearby monster with several
-        // claimants loses to a slightly farther unclaimed one.
+        // claimants loses to a slightly farther unclaimed one. The
+        // unpenalized lens (ignoreClaims) skips this spread pressure.
         let claimants = 0;
-        for (const h of this.hunters) {
-          if (h.id !== hunter.id && h.targetMonsterId === m.id) claimants++;
+        if (!ignoreClaims) {
+          for (const h of this.hunters) {
+            if (h.id !== hunter.id && h.targetMonsterId === m.id) claimants++;
+          }
         }
         const score = (Math.abs(m.level - hunter.level) * 3 + d) * (1 + 0.6 * claimants);
         if (score < bestScore) {
@@ -2345,6 +2496,7 @@ export class GameSimulation {
       difficulty: this.difficulty,
       monsterPopulation: this.monsterPopulation,
       autoDirector: this.autoDirector,
+      agentConfig: { ...this.agentConfig },
       dynamicHp: this.dynamicHp,
       dynamicAtk: this.dynamicAtk,
       summonCountdown: this.summonCountdown,
@@ -2425,6 +2577,9 @@ export class GameSimulation {
         sim.monsterPopulation = 14;
       }
       sim.autoDirector = data.autoDirector !== false;
+      // Hunter-brain knobs: old saves without them get defaults; stored
+      // values are re-clamped so foreign/hand-edited saves can't break AI.
+      sim.agentConfig = clampAgentConfig({ ...DEFAULT_AGENT_CONFIG, ...(data.agentConfig ?? {}) });
       sim.dynamicHp = num(data.dynamicHp, 1);
       sim.dynamicAtk = num(data.dynamicAtk, 1);
       sim.summonCountdown = num(data.summonCountdown, sim.autoSummonInterval);
