@@ -894,6 +894,181 @@ export function createBedTexture(): Texture {
 }
 
 // --------------------------------------------------------------------------
+// 6b. FORGE & CAULDRON SERVICE STATIONS (small crisp pixel-art decor)
+// --------------------------------------------------------------------------
+
+/** Forge anvil on a tree stump: dark iron top, wooden stump base. (~22x20) */
+export function createAnvilTexture(): Texture {
+  const w = 22;
+  const h = 20;
+  const canvas = createPixelCanvas(w, h);
+  const ctx = canvas.getContext('2d')!;
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(11, 17, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tree stump base
+  ctx.fillStyle = '#5b3a1e';
+  ctx.fillRect(5, 10, 12, 7);
+  // Bark shading
+  ctx.fillStyle = '#3a2412';
+  ctx.fillRect(5, 10, 2, 7);
+  ctx.fillRect(15, 10, 2, 7);
+  // Stump top rings
+  ctx.fillStyle = '#8a5f30';
+  ctx.fillRect(5, 9, 12, 2);
+  ctx.fillStyle = '#a16207';
+  ctx.fillRect(7, 9, 8, 1);
+
+  // Anvil waist
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(8, 6, 6, 3);
+
+  // Anvil top (horn to the right)
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(2, 3, 15, 4);
+  // Horn taper
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(17, 4, 3, 2);
+  ctx.fillRect(20, 4, 1, 1);
+  // Iron highlight
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillRect(2, 3, 15, 1);
+  ctx.fillStyle = '#64748b';
+  ctx.fillRect(8, 6, 6, 1);
+
+  // Ember glow on the face
+  ctx.fillStyle = '#ea580c';
+  ctx.fillRect(4, 5, 2, 1);
+
+  return Texture.from(canvas);
+}
+
+/** Brewing vat: iron-banded wooden tub with bubbling green brew. (~22x22) */
+export function createVatTexture(): Texture {
+  const w = 22;
+  const h = 22;
+  const canvas = createPixelCanvas(w, h);
+  const ctx = canvas.getContext('2d')!;
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(11, 19, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Wooden tub body
+  ctx.fillStyle = '#5b3a1e';
+  ctx.fillRect(4, 8, 14, 11);
+  // Plank shading
+  ctx.fillStyle = '#8a5f30';
+  ctx.fillRect(4, 8, 2, 11);
+  ctx.fillStyle = '#3a2412';
+  ctx.fillRect(9, 8, 1, 11);
+  ctx.fillRect(14, 8, 1, 11);
+  // Iron bands
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(4, 10, 14, 2);
+  ctx.fillRect(4, 15, 14, 2);
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(4, 10, 14, 1);
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(4, 15, 14, 1);
+
+  // Green brew surface
+  ctx.fillStyle = '#10b981';
+  ctx.beginPath();
+  ctx.ellipse(11, 8, 7, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Brew highlight
+  ctx.fillStyle = '#6ee7b7';
+  ctx.beginPath();
+  ctx.ellipse(9, 7, 3, 1, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Bubbles
+  ctx.fillStyle = '#a7f3d0';
+  ctx.fillRect(8, 4, 2, 2);
+  ctx.fillRect(13, 3, 2, 2);
+  ctx.fillStyle = '#34d399';
+  ctx.fillRect(12, 5, 1, 1);
+
+  return Texture.from(canvas);
+}
+
+/** Straw training dummy on a wooden post: tan/yellow straw body & head. (~20x28) */
+export function createTrainingDummyTexture(): Texture {
+  const w = 20;
+  const h = 28;
+  const canvas = createPixelCanvas(w, h);
+  const ctx = canvas.getContext('2d')!;
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(10, 25, 7, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Wooden pole
+  ctx.fillStyle = '#5b3a1e';
+  ctx.fillRect(9, 8, 3, 17);
+  // Pole highlight
+  ctx.fillStyle = '#8a5f30';
+  ctx.fillRect(9, 8, 1, 17);
+  // Pole base shading
+  ctx.fillStyle = '#3a2412';
+  ctx.fillRect(11, 8, 1, 17);
+
+  // Crossbar arms
+  ctx.fillStyle = '#5b3a1e';
+  ctx.fillRect(3, 12, 14, 2);
+  ctx.fillStyle = '#8a5f30';
+  ctx.fillRect(3, 12, 14, 1);
+
+  // Straw body (bound bundle)
+  ctx.fillStyle = '#d9a441';
+  ctx.fillRect(6, 14, 8, 8);
+  // Straw shading (darker sides)
+  ctx.fillStyle = '#a16207';
+  ctx.fillRect(6, 14, 2, 8);
+  ctx.fillRect(12, 14, 2, 8);
+  // Straw highlight streaks
+  ctx.fillStyle = '#fde047';
+  ctx.fillRect(8, 14, 1, 8);
+  ctx.fillRect(11, 14, 1, 8);
+  // Straw texture ticks
+  ctx.fillStyle = '#b45309';
+  ctx.fillRect(8, 17, 4, 1);
+  ctx.fillRect(9, 20, 3, 1);
+
+  // Rope ties binding the straw
+  ctx.fillStyle = '#78350f';
+  ctx.fillRect(6, 15, 8, 1);
+  ctx.fillRect(6, 20, 8, 1);
+
+  // Straw head
+  ctx.fillStyle = '#e8b64c';
+  ctx.fillRect(7, 4, 6, 5);
+  // Head shading
+  ctx.fillStyle = '#a16207';
+  ctx.fillRect(7, 4, 1, 5);
+  // Head highlight
+  ctx.fillStyle = '#fef08a';
+  ctx.fillRect(9, 4, 2, 5);
+  // Straw ticks on head
+  ctx.fillStyle = '#b45309';
+  ctx.fillRect(8, 6, 4, 1);
+
+  // Rope headband
+  ctx.fillStyle = '#78350f';
+  ctx.fillRect(7, 7, 6, 1);
+
+  return Texture.from(canvas);
+}
+
+// --------------------------------------------------------------------------
 // 7. SKILL VFX & VISUAL EFFECTS
 // --------------------------------------------------------------------------
 

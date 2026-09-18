@@ -169,9 +169,6 @@ export interface Building {
   description: string;
   serviceName: string;
   currentVisitors: string[]; // hunter IDs inside or using service
-  cooldown: number; // seconds until the shop can start its next production-gated service; 0 = ready
-  stock: number; // finished produced items ready to buy (blacksmith upgrade items / alchemy elixirs)
-  buffStock: number; // crafted buff tonics ready to buy (alchemy lab second product)
   upgradeEffect: string;
 }
 

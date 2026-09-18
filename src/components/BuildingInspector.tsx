@@ -1,10 +1,10 @@
 import React from 'react';
-import { 
-  X, Building as BuildingIcon, Sparkles, TrendingUp, 
-  Coins, Users, CheckCircle2, Eye, ShieldCheck, Package 
+import {
+  X, Building as BuildingIcon, Sparkles, TrendingUp,
+  Coins, Users, CheckCircle2, Eye, ShieldCheck
 } from 'lucide-react';
 import { Building, Hunter, MaterialStock } from '../types';
-import { buildingCapacity, serviceTime, productionInterval, productionCapacity, productionCost } from '../game/simulation';
+import { buildingCapacity, serviceTime } from '../game/simulation';
 
 interface BuildingInspectorProps {
   building: Building;
@@ -35,14 +35,6 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
   const expPercent = Math.max(0, Math.min(100, (building.exp / building.expToNext) * 100));
 
   const visitingHunters = hunters.filter(h => building.currentVisitors.includes(h.id));
-
-  const matsTotal = materialStock ? Object.values(materialStock).reduce((a, b) => a + b, 0) : 0;
-  const cap = productionCapacity(building);
-  const buffStock = building.buffStock ?? 0;
-  const needsProduction = building.type === 'ALCHEMY_LAB'
-    ? (building.stock < cap || buffStock < cap)
-    : building.stock < cap;
-  const stalled = needsProduction && matsTotal < productionCost(building);
 
   return (
     <div className="absolute right-3 top-20 bottom-3 w-84 max-w-[calc(100vw-24px)] z-20 flex flex-col bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl shadow-black/60 overflow-hidden text-slate-200 pointer-events-auto font-sans">
@@ -199,120 +191,9 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
             <span className="text-slate-400">Service time</span>
             <span className="text-slate-200 font-bold">{serviceTime(building).toFixed(1)}s</span>
           </div>
-          {(building.type === 'BLACKSMITH' || building.type === 'ALCHEMY_LAB') && (
-            <>
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-slate-400">{building.type === 'BLACKSMITH' ? 'Upgrade items' : 'Elixirs'}</span>
-                <span className="text-slate-200 font-bold">{building.stock} / {productionCapacity(building)}</span>
-              </div>
-              {building.type === 'ALCHEMY_LAB' && (
-                <div className="flex items-center justify-between text-[11px] font-mono">
-                  <span className="text-slate-400">Tonics</span>
-                  <span className="text-slate-200 font-bold">{buffStock} / {productionCapacity(building)}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-slate-400">Production</span>
-                <span className={`font-bold ${stalled ? 'text-red-300' : building.cooldown > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
-                  {stalled ? '⏳ Needs materials' : building.cooldown > 0 ? `Crafting… ${Math.max(0, building.cooldown).toFixed(1)}s` : `every ${productionInterval(building).toFixed(0)}s`}
-                </span>
-              </div>
-            </>
-          )}
         </div>
 
-        {(building.type === 'BLACKSMITH' || building.type === 'ALCHEMY_LAB') ? (
-        <div>
-          <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-            <Package className="w-3.5 h-3.5 text-amber-400" /> Crafted Items
-          </h3>
-
-          {building.type === 'BLACKSMITH' ? (
-          <div className="grid grid-cols-2 gap-1.5">
-            {Array.from({ length: productionCapacity(building) }).map((_, i) => {
-              const filledCount = Math.max(0, Math.min(building.stock, productionCapacity(building)));
-              if (i < filledCount) {
-                return (
-                  <div key={i} className="p-2 rounded-lg bg-blue-950/40 border border-blue-500/30">
-                    <div className="text-sm">🔨</div>
-                    <div className="font-bold text-slate-200 text-xs mt-0.5">Upgrade Kit</div>
-                    <div className="text-[10px] text-slate-400">Weapon/Armor +1 tier</div>
-                  </div>
-                );
-              }
-              return (
-                <div key={i} className="p-2 rounded-lg border border-dashed border-slate-700 text-slate-600 text-center text-[10px]">
-                  Empty
-                </div>
-              );
-            })}
-          </div>
-          ) : (
-          <div className="space-y-3">
-            <div>
-              <div className="text-[10px] font-mono text-slate-400 mb-1">Elixirs {building.stock}/{productionCapacity(building)}</div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {Array.from({ length: productionCapacity(building) }).map((_, i) => {
-                  const filledCount = Math.max(0, Math.min(building.stock, productionCapacity(building)));
-                  if (i < filledCount) {
-                    return (
-                      <div key={i} className="p-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30">
-                        <div className="text-sm">🧪</div>
-                        <div className="font-bold text-slate-200 text-xs mt-0.5">Elixir</div>
-                        <div className="text-[10px] text-slate-400">+50% HP auto-drink</div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={i} className="p-2 rounded-lg border border-dashed border-slate-700 text-slate-600 text-center text-[10px]">
-                      Empty
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono text-slate-400 mb-1">Tonics {buffStock}/{productionCapacity(building)}</div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {Array.from({ length: productionCapacity(building) }).map((_, i) => {
-                  const filledCount = Math.max(0, Math.min(buffStock, productionCapacity(building)));
-                  if (i < filledCount) {
-                    return (
-                      <div key={i} className="p-2 rounded-lg bg-orange-950/40 border border-orange-500/30">
-                        <div className="text-sm">⚗️</div>
-                        <div className="font-bold text-slate-200 text-xs mt-0.5">Tonic</div>
-                        <div className="text-[10px] text-slate-400">+20% ATK for 60s</div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={i} className="p-2 rounded-lg border border-dashed border-slate-700 text-slate-600 text-center text-[10px]">
-                      Empty
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-          )}
-
-          <div className="text-[10px] font-mono text-slate-400 mt-1.5 space-y-0.5">
-            <div className={stalled ? 'text-red-300' : building.cooldown > 0 ? 'text-amber-300' : 'text-emerald-300'}>
-              {stalled
-                ? '⏳ Needs materials'
-                : building.cooldown > 0
-                ? `Crafting… ${Math.max(0, building.cooldown).toFixed(1)}s`
-                : `Ready — every ${productionInterval(building).toFixed(0)}s`}
-            </div>
-            <div>
-              {building.type === 'BLACKSMITH'
-                ? 'Weapon 80×tier g · Armor 60×tier g'
-                : `Elixir ${15 + 5 * building.level}g each · Tonic ${20 + 5 * building.level}g each`}
-            </div>
-          </div>
-        </div>
-        ) : (
-        /* Visiting Hunters in Queue */
+        {/* Visiting Hunters in Queue */}
         <div>
           <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
             <Users className="w-3.5 h-3.5 text-indigo-400" /> Active Customers
@@ -343,7 +224,6 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
             </div>
           )}
         </div>
-        )}
       </div>
     </div>
   );

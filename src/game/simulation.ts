@@ -28,9 +28,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'The Chief Sanctuary. Manages town territory and hunter allowances.',
     serviceName: 'Town Governance',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Increases max hunters & global town hunting tax rate.'
   },
   {
@@ -52,9 +49,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'Crafts and upgrades high-grade weapons and heavy armor for hunters.',
     serviceName: 'Weapon & Armor Crafting',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Unlocks higher weapon & armor tiers for auto-buying.'
   },
   {
@@ -76,9 +70,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'Brews restorative HP and combat elixirs from monster essences.',
     serviceName: 'Potion Dispensing',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Brews stronger restorative potions with instant heal.'
   },
   {
@@ -100,9 +91,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'Serves roast meat and frothy ale to recharge exhausted hunters.',
     serviceName: 'Food & Lodging',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Grants temporary Morale ATK buff to visiting hunters.'
   },
   {
@@ -124,9 +112,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'Martial school where hunters study and auto-upgrade combat skills.',
     serviceName: 'Skill Mastery',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Unlocks advanced skill masteries and reduces cooldowns.'
   },
   {
@@ -148,9 +133,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'Buys all harvested monster trophies, fangs, and pelts for gold.',
     serviceName: 'Loot Exchange',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Increases purchase price paid to hunters by +15% per level.'
   },
   {
@@ -172,9 +154,6 @@ export const INITIAL_BUILDINGS: Building[] = [
     description: 'Tends to wounded hunters and resurrects fallen warriors from fields.',
     serviceName: 'Emergency Healing',
     currentVisitors: [],
-    cooldown: 0,
-    stock: 0,
-    buffStock: 0,
     upgradeEffect: 'Dramatically speeds up recovery time from field wounds.'
   }
 ];
@@ -231,25 +210,6 @@ export function serviceTime(b: Building): number {
     case 'CLINIC': return Math.max(2.0, 13 - 1.1 * b.level);
     default: return Math.max(1.5, 11 - 0.9 * b.level);
   }
-}
-
-/** Seconds between production-gated services (smithy/alchemy); 0 = no gate. */
-export function productionInterval(b: Building): number {
-  if (b.type === 'BLACKSMITH' || b.type === 'ALCHEMY_LAB') return Math.max(4, 12 - b.level);
-  return 0;
-}
-
-/** Finished-item slot capacity for production buildings (grows with level); 0 for others. */
-export function productionCapacity(b: Building): number {
-  if (b.type === 'BLACKSMITH' || b.type === 'ALCHEMY_LAB') return 6 + Math.floor(b.level / 2);
-  return 0;
-}
-
-/** Town materials consumed per produced item (blacksmith upgrade / alchemy elixir); 0 for others. */
-export function productionCost(b: Building): number {
-  if (b.type === 'BLACKSMITH') return 2;
-  if (b.type === 'ALCHEMY_LAB') return 1;
-  return 0;
 }
 
 /** Lv-1 base stats for a class+rarity (rarity multiplier + trainee gear names). */
@@ -447,21 +407,6 @@ export class GameSimulation {
   /** Seconds a hunter spends receiving a building's service. */
   public serviceTime(b: Building): number {
     return serviceTime(b);
-  }
-
-  /** Seconds between production-gated services (smithy/alchemy). */
-  public productionInterval(b: Building): number {
-    return productionInterval(b);
-  }
-
-  /** Finished-item slot capacity for production buildings (delegates to helper). */
-  public productionCapacity(b: Building): number {
-    return productionCapacity(b);
-  }
-
-  /** Town materials consumed per produced item (delegates to helper). */
-  public productionCost(b: Building): number {
-    return productionCost(b);
   }
 
   /** Spawn multipliers for a difficulty level 1-10 (5 = standard 1x). */
@@ -956,50 +901,6 @@ export class GameSimulation {
 
     // 6. Monster Repopulation Check
     this.checkMonsterRepopulation();
-
-    // 7. Tick down building production cooldowns
-    for (const b of this.buildings) if (b.cooldown > 0) b.cooldown -= effectiveDt;
-
-    // 8. CONTINUOUS PRODUCTION: blacksmith/alchemy craft into stock over time,
-    // consuming town materials and filling slots up to capacity (independent of hunters).
-    for (const b of this.buildings) {
-      if (b.type !== 'BLACKSMITH' && b.type !== 'ALCHEMY_LAB') continue;
-      if (b.cooldown > 0) continue;
-      const cap = this.productionCapacity(b);
-      if (b.type === 'ALCHEMY_LAB') {
-        const elixirStock = b.stock;
-        const tonicStock = b.buffStock ?? 0;
-        if (elixirStock >= cap && tonicStock >= cap) continue;
-        // Brew whichever product is less full (fill-ratio); tie → elixir.
-        const elixirRatio = elixirStock / cap;
-        const tonicRatio = tonicStock / cap;
-        let makeTonic = tonicRatio < elixirRatio;
-        if (elixirRatio <= tonicRatio) makeTonic = false;
-        else makeTonic = true;
-        // If the chosen side is full, brew the other side instead.
-        if (!makeTonic && elixirStock >= cap) makeTonic = true;
-        if (makeTonic && tonicStock >= cap) makeTonic = false;
-        const cost = this.productionCost(b);
-        if (this.totalMaterials() >= cost) {
-          this.takeMaterials(cost);
-          if (makeTonic) b.buffStock = tonicStock + 1;
-          else b.stock = elixirStock + 1;
-          b.cooldown = this.productionInterval(b);
-        } else {
-          b.cooldown = 1; // retry soon when materials arrive
-        }
-        continue;
-      }
-      if (b.stock >= cap) continue;
-      const cost = this.productionCost(b);
-      if (this.totalMaterials() >= cost) {
-        this.takeMaterials(cost);
-        b.stock++;
-        b.cooldown = this.productionInterval(b);
-      } else {
-        b.cooldown = 1; // retry soon when materials arrive
-      }
-    }
   }
 
   private spawnBoss() {
@@ -1259,32 +1160,17 @@ export class GameSimulation {
                   if (Math.random() < 0.3) this.addFloatingText(`⌛ Queued for ${building.name}`, hunter.gx, hunter.gy, '#cbd5e1', 11);
                   break;
                 }
-                if (this.productionInterval(building) > 0) {
-                  const labEmpty = building.type === 'ALCHEMY_LAB'
-                    ? building.stock <= 0 && (building.buffStock ?? 0) <= 0
-                    : building.stock <= 0;
-                  if (labEmpty) {
-                  // Shelf empty: don't queue on the production timer — leave town flow
-                  // (selling continues elsewhere, materials arrive, shelf refills).
-                  this.addFloatingText(`🏷️ ${building.name} out of stock`, hunter.gx, hunter.gy, '#cbd5e1', 11);
-                  hunter.targetBuildingId = null;
-                  hunter.state = 'WANDERING_TOWN';
-                  hunter.stateTimer = 2;
-                  break;
+                if (building.type === 'BLACKSMITH') {
+                  const canBuyWeapon = hunter.weapon.tier < 5 && hunter.gold >= hunter.weapon.tier * 80;
+                  const canBuyArmor = hunter.weapon.tier >= 5 && hunter.armor.tier < 5 && hunter.gold >= hunter.armor.tier * 60;
+                  if (!canBuyWeapon && !canBuyArmor) {
+                    this.addFloatingText(`💸 Can't afford the forge`, hunter.gx, hunter.gy, '#fca5a5', 11);
+                    hunter.targetBuildingId = null;
+                    hunter.state = 'WANDERING_TOWN';
+                    hunter.stateTimer = 2;
+                    break;
                   }
-                }
-                if (this.productionInterval(building) > 0) {
-                  if (building.type === 'BLACKSMITH') {
-                    const canBuyWeapon = hunter.weapon.tier < 5 && hunter.gold >= hunter.weapon.tier * 80;
-                    const canBuyArmor = hunter.weapon.tier >= 5 && hunter.armor.tier < 5 && hunter.gold >= hunter.armor.tier * 60;
-                    if (!canBuyWeapon && !canBuyArmor) {
-                      this.addFloatingText(`💸 Can't afford the forge`, hunter.gx, hunter.gy, '#fca5a5', 11);
-                      hunter.targetBuildingId = null;
-                      hunter.state = 'WANDERING_TOWN';
-                      hunter.stateTimer = 2;
-                      break;
-                    }
-                  } else if (building.type === 'ALCHEMY_LAB') {
+                } else if (building.type === 'ALCHEMY_LAB') {
                     const elixirNeed = Math.max(0, this.elixirCapacity() - hunter.elixirs);
                     const elixirCostPer = 15 + building.level * 5;
                     const tonicNeed = Math.max(0, this.tonicCapacity() - hunter.tonics);
@@ -1298,7 +1184,6 @@ export class GameSimulation {
                       hunter.stateTimer = 2;
                       break;
                     }
-                  }
                 }
                 this.executeBuildingVisit(hunter, building);
               }
@@ -1339,7 +1224,7 @@ export class GameSimulation {
 
       case 'WANDERING_TOWN': {
         // Idle stroll in town plaza, then check the town errand hub:
-        // stock-out strollers pick up other errands before marching out
+        // turned-away strollers pick up other errands before marching out
         hunter.stateTimer -= dt;
         if (hunter.stateTimer <= 0) {
           this.evaluateTownNeeds(hunter);
@@ -1472,8 +1357,15 @@ export class GameSimulation {
   private handleMonsterDefeat(hunter: Hunter, monster: Monster) {
     this.totalMonstersDefeated++;
     hunter.killCount++;
-    this.windowKills++;
-    this.evaluateDirector();
+    // Nursery kills don't feed the auto-director: zone-1 spawns only feel
+    // half the dynamic swing (zoneDamp 0.5), so counting ~98% forest kills
+    // drives survival >80% → buffs to the 4x cap that zone 2/3 feel fully.
+    // On-level crypt fights then read as mulch (e.g. Lv8 vs ghoul at 3.2
+    // hits-to-die < 6) and isTooHardFor pins everyone in the forest.
+    if (monster.zone !== 1) {
+      this.windowKills++;
+      this.evaluateDirector();
+    }
 
     if (monster.isBoss) {
       this.isBossActive = false;
@@ -1491,8 +1383,14 @@ export class GameSimulation {
       hunter.inventory.push({ ...drop });
     });
 
-    this.addFloatingText(`+${monster.expReward} EXP`, hunter.gx, hunter.gy, '#a855f7', 12);
-    this.gainExp(hunter, monster.expReward);
+    // Gray EXP: prey 5+ levels below the hunter teaches nothing (bosses
+    // always count). Gold, loot, and town tax are untouched.
+    if (monster.isBoss || hunter.level - monster.level < 5) {
+      this.addFloatingText(`+${monster.expReward} EXP`, hunter.gx, hunter.gy, '#a855f7', 12);
+      this.gainExp(hunter, monster.expReward);
+    } else {
+      this.addFloatingText('+0 EXP (prey too weak)', hunter.gx, hunter.gy, '#6b7280', 11);
+    }
 
     // Remove monster
     const index = this.monsters.indexOf(monster);
@@ -1662,15 +1560,15 @@ export class GameSimulation {
     } else if (building.type === 'BLACKSMITH') {
       hunter.state = 'UPGRADING_GEAR';
       hunter.stateTimer = this.serviceTime(building);
-      this.addFloatingText('Browsing the forge…', building.doorGx, building.doorGy - 0.5, '#38bdf8', 13);
+      this.addFloatingText('⚒️ Forging gear…', building.doorGx, building.doorGy - 0.5, '#38bdf8', 13);
     } else if (building.type === 'TRAINING_ACADEMY') {
       hunter.state = 'LEARNING_SKILL';
       hunter.stateTimer = this.serviceTime(building);
-      this.addFloatingText('📜 Studying…', building.doorGx, building.doorGy - 0.5, '#a855f7', 13);
+      this.addFloatingText('📜 Training at Valor Academy…', building.doorGx, building.doorGy - 0.5, '#a855f7', 13);
     } else if (building.type === 'ALCHEMY_LAB') {
       hunter.state = 'BREWING_ELIXIR';
       hunter.stateTimer = this.serviceTime(building);
-      this.addFloatingText('Shopping for elixirs…', building.doorGx, building.doorGy - 0.5, '#4ade80', 13);
+      this.addFloatingText('🧪 Brewing elixirs…', building.doorGx, building.doorGy - 0.5, '#4ade80', 13);
     } else if (building.type === 'CLINIC') {
       hunter.state = 'RECOVERING_CLINIC';
       hunter.stateTimer = this.serviceTime(building);
@@ -1688,8 +1586,11 @@ export class GameSimulation {
    * need outscores the hunt baseline (0.5) — proportionate needs beat
    * hard-priority chains, so a lone skill point (≤0.45) never yanks a
    * healthy hunter off the field; it batches into the next real town trip.
-   * Shop availability mirrors the door/purchase gates exactly (stock +
-   * affordability), so a nonzero lab/forge score is always actionable.
+   * Shop availability mirrors the door/purchase gates exactly (need +
+   * gold + town-materials affordability), so a nonzero lab/forge score is
+   * always actionable: materials are consumed at completion, so without
+   * stock on hand the hunter would burn a full service for nothing and
+   * loop straight back.
    */
   private scoreNeeds(hunter: Hunter): {
     sell: number; tavern: number; lab: number; forge: number;
@@ -1702,10 +1603,10 @@ export class GameSimulation {
     const lab = this.buildings.find(b => b.type === 'ALCHEMY_LAB');
     const forge = this.buildings.find(b => b.type === 'BLACKSMITH');
     const elixirNeed = Math.max(0, this.elixirCapacity() - hunter.elixirs);
-    const labOk = lab && lab.stock > 0 && elixirNeed > 0 && hunter.gold >= (15 + lab.level * 5);
+    const labOk = lab && elixirNeed > 0 && hunter.gold >= (15 + lab.level * 5) && this.totalMaterials() >= 1;
     const tonicNeed = Math.max(0, this.tonicCapacity() - hunter.tonics);
-    const tonicOk = lab && (lab.buffStock ?? 0) > 0 && tonicNeed > 0 && hunter.gold >= (20 + lab.level * 5);
-    const forgeOk = forge && forge.stock > 0 && this.canAffordForgeUpgrade(hunter);
+    const tonicOk = lab && tonicNeed > 0 && hunter.gold >= (20 + lab.level * 5) && this.totalMaterials() >= 1;
+    const forgeOk = forge && this.totalMaterials() >= 2 && this.canAffordForgeUpgrade(hunter);
     return {
       sell: hunter.inventory.length >= hunter.maxInventorySlots ? 1.0 : bagU * bagU * 0.4,
       tavern: moodU < 0.65 ? (0.65 - moodU) / 0.65 : 0,            // town: <65 goes, lower = more urgent
@@ -1821,56 +1722,62 @@ export class GameSimulation {
         }
         case 'UPGRADING_GEAR': {
           if (serviceBuilding.type !== 'BLACKSMITH') break;
-          // 2. Hunter BUYS finished upgrade items from the forge's stock.
-          // Production is automatic in update(); here we only sell from stock.
-          // Batch the whole backlog in ONE visit (every affordable tier) so
-          // one forge service clears the errand instead of re-queue chains.
-          if (serviceBuilding.stock > 0) {
-            for (;;) {
-            if (hunter.weapon.tier < 5) {
-              const upgradeCost = hunter.weapon.tier * 80;
-              if (hunter.gold >= upgradeCost && serviceBuilding.stock > 0) {
-                hunter.gold -= upgradeCost;
-                serviceBuilding.stock--;
-                hunter.weapon.tier += 1;
-                hunter.weapon.atkBonus += 8;
-                hunter.weapon.name = `${this.getEquipmentPrefix(hunter.weapon.tier)} ${hunter.charClass} Weapon`;
+          // 2. Timed forge service: the smith hammers one upgrade at
+          // completion — weapon first, armor once the weapon is maxed.
+          // Gold AND town materials are checked at completion (never at
+          // the door), like tavern/clinic. No charity freebie.
+          let forged = false;
+          if (hunter.weapon.tier < 5) {
+            const upgradeCost = hunter.weapon.tier * 80;
+            if (hunter.gold >= upgradeCost && this.totalMaterials() >= 2) {
+              hunter.gold -= upgradeCost;
+              this.takeMaterials(2);
+              hunter.weapon.tier += 1;
+              hunter.weapon.atkBonus += 8;
+              hunter.weapon.name = `${this.getEquipmentPrefix(hunter.weapon.tier)} ${hunter.charClass} Weapon`;
 
-                soundFx.playSlash();
-                this.addFloatingText(`🔨 Bought Tier ${hunter.weapon.tier} weapon`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
-                this.addLog('upgrade', `${hunter.name} bought a Tier ${hunter.weapon.tier} weapon from the ${serviceBuilding.name}!`, hunter.name);
+              soundFx.playSlash();
+              this.addFloatingText(`🔨 Bought Tier ${hunter.weapon.tier} weapon`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
+              this.addLog('upgrade', `${hunter.name} bought a Tier ${hunter.weapon.tier} weapon from the ${serviceBuilding.name}!`, hunter.name);
 
-                this.recordStoreTransaction(serviceBuilding, 30, upgradeCost);
-                continue;
-              } else {
-                if (hunter.gold < upgradeCost) this.addFloatingText('Not enough gold for the forge', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
-                break;
-              }
-            } else if (hunter.armor.tier < 5) {
-              const upgradeCost = hunter.armor.tier * 60;
-              if (hunter.gold >= upgradeCost && serviceBuilding.stock > 0) {
-                hunter.gold -= upgradeCost;
-                serviceBuilding.stock--;
-                hunter.armor.tier += 1;
-                hunter.armor.defBonus += 4;
-                hunter.armor.hpBonus += 15;
-                hunter.armor.name = `${this.getEquipmentPrefix(hunter.armor.tier)} ${hunter.charClass} Armor`;
-
-                soundFx.playSlash();
-                this.addFloatingText(`🔨 Bought Tier ${hunter.armor.tier} armor`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
-                this.addLog('upgrade', `${hunter.name} bought a Tier ${hunter.armor.tier} armor from the ${serviceBuilding.name}!`, hunter.name);
-
-                this.recordStoreTransaction(serviceBuilding, 30, upgradeCost);
-                continue;
-              } else {
-                if (hunter.gold < upgradeCost) this.addFloatingText('Not enough gold for the forge', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
-                break;
-              }
+              this.recordStoreTransaction(serviceBuilding, 30, upgradeCost);
+              forged = true;
+            } else if (hunter.gold >= upgradeCost) {
+              this.addFloatingText('⚒️ Forge needs 2 materials', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
+            } else {
+              this.addFloatingText('Not enough gold for the forge', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
             }
-            break;
+          } else if (hunter.armor.tier < 5) {
+            const upgradeCost = hunter.armor.tier * 60;
+            if (hunter.gold >= upgradeCost && this.totalMaterials() >= 2) {
+              hunter.gold -= upgradeCost;
+              this.takeMaterials(2);
+              hunter.armor.tier += 1;
+              hunter.armor.defBonus += 4;
+              hunter.armor.hpBonus += 15;
+              hunter.armor.name = `${this.getEquipmentPrefix(hunter.armor.tier)} ${hunter.charClass} Armor`;
+
+              soundFx.playSlash();
+              this.addFloatingText(`🔨 Bought Tier ${hunter.armor.tier} armor`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
+              this.addLog('upgrade', `${hunter.name} bought a Tier ${hunter.armor.tier} armor from the ${serviceBuilding.name}!`, hunter.name);
+
+              this.recordStoreTransaction(serviceBuilding, 30, upgradeCost);
+              forged = true;
+            } else if (hunter.gold >= upgradeCost) {
+              this.addFloatingText('⚒️ Forge needs 2 materials', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
+            } else {
+              this.addFloatingText('Not enough gold for the forge', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
             }
-          } else {
-            this.addFloatingText('⚒️ Forge out of stock', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
+          }
+          if (forged && this.totalMaterials() >= 2 && this.canAffordForgeUpgrade(hunter)) {
+            // Commission breather: another upgrade is already affordable,
+            // so the hub would send the hunter straight back through the
+            // door with no observable gap between timed holds. Step out
+            // for a moment instead — the next commission re-queues through
+            // the door like any other visit.
+            hunter.state = 'WANDERING_TOWN';
+            hunter.stateTimer = 2.5;
+            return;
           }
           break;
         }
@@ -1906,51 +1813,46 @@ export class GameSimulation {
         }
         case 'BREWING_ELIXIR': {
           if (serviceBuilding.type !== 'ALCHEMY_LAB') break;
-          // 4. Hunter BUYS finished elixirs AND buff tonics from the cauldron's stocks.
-          // Production is automatic in update(); here we only sell from stock.
-          // Elixirs first, then tonics with remaining gold (no freebies either way).
-          let boughtElixir = 0;
-          let boughtTonic = 0;
-          if (serviceBuilding.stock > 0) {
+          // 4. Timed brewing service: the cauldron fills elixirs first, then
+          // tonics, at completion — as many as gold + town materials allow.
+          // Materials are checked at completion (never at the door), like
+          // tavern/clinic. Broke/empty just informs; no charity freebie.
+          let brewedElixir = 0;
+          let brewedTonic = 0;
+          {
             const capacity = this.elixirCapacity();
-            const need = Math.max(0, capacity - hunter.elixirs);
             const costPer = 15 + serviceBuilding.level * 5;
-            const affordable = Math.floor(hunter.gold / costPer);
-            const bought = Math.min(need, serviceBuilding.stock, affordable);
-            if (bought > 0) {
-              hunter.gold -= bought * costPer;
-              serviceBuilding.stock -= bought;
-              hunter.elixirs += bought;
-              boughtElixir = bought;
+            while (hunter.elixirs < capacity && hunter.gold >= costPer && this.totalMaterials() >= 1) {
+              hunter.gold -= costPer;
+              this.takeMaterials(1);
+              hunter.elixirs += 1;
+              brewedElixir += 1;
+            }
+            if (brewedElixir > 0) {
               soundFx.playCoin();
-              this.addFloatingText(`🧪 Bought ${bought} elixir${bought > 1 ? 's' : ''}`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#4ade80', 13);
-              this.addLog('trade', `${hunter.name} bought ${bought} elixir${bought > 1 ? 's' : ''} from ${serviceBuilding.name}.`, hunter.name);
-              this.recordStoreTransaction(serviceBuilding, 24, bought * costPer);
+              this.addFloatingText(`🧪 Brewed ${brewedElixir} elixir${brewedElixir > 1 ? 's' : ''}`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#4ade80', 13);
+              this.addLog('trade', `${hunter.name} brewed ${brewedElixir} elixir${brewedElixir > 1 ? 's' : ''} at ${serviceBuilding.name}.`, hunter.name);
+              this.recordStoreTransaction(serviceBuilding, 24, brewedElixir * costPer);
             }
           }
           {
             const capacity = this.tonicCapacity();
-            const need = Math.max(0, capacity - hunter.tonics);
             const price = 20 + serviceBuilding.level * 5;
-            const affordable = Math.floor(hunter.gold / price);
-            const buy = Math.min(need, serviceBuilding.buffStock ?? 0, affordable);
-            if (buy > 0) {
-              hunter.gold -= buy * price;
-              serviceBuilding.buffStock -= buy;
-              hunter.tonics += buy;
-              boughtTonic = buy;
+            while (hunter.tonics < capacity && hunter.gold >= price && this.totalMaterials() >= 1) {
+              hunter.gold -= price;
+              this.takeMaterials(1);
+              hunter.tonics += 1;
+              brewedTonic += 1;
+            }
+            if (brewedTonic > 0) {
               soundFx.playCoin();
-              this.addFloatingText(`🥤 Bought ${buy} tonic${buy > 1 ? 's' : ''}`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fb923c', 13);
-              this.addLog('trade', `${hunter.name} bought ${buy} tonic${buy > 1 ? 's' : ''} from ${serviceBuilding.name}.`, hunter.name);
-              this.recordStoreTransaction(serviceBuilding, 24, buy * price);
+              this.addFloatingText(`🥤 Brewed ${brewedTonic} tonic${brewedTonic > 1 ? 's' : ''}`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fb923c', 13);
+              this.addLog('trade', `${hunter.name} brewed ${brewedTonic} tonic${brewedTonic > 1 ? 's' : ''} at ${serviceBuilding.name}.`, hunter.name);
+              this.recordStoreTransaction(serviceBuilding, 24, brewedTonic * price);
             }
           }
-          if (boughtElixir === 0 && boughtTonic === 0) {
-            if (serviceBuilding.stock <= 0 && (serviceBuilding.buffStock ?? 0) <= 0) {
-              this.addFloatingText('🧪 Cauldron out of stock', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
-            } else {
-              this.addFloatingText('Not enough gold for elixirs', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
-            }
+          if (brewedElixir === 0 && brewedTonic === 0) {
+            this.addFloatingText('Not enough gold or materials for brews', serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
           }
           break;
         }
@@ -2611,11 +2513,9 @@ export class GameSimulation {
       }
       if (rescued > 0) sim.addLog('summon', `Rescued ${rescued} hunter(s) stranded outside the world — recalled to town plaza.`);
       // Buildings drop stale visitor references; hunters re-register on visit
+      // (legacy stock/cooldown save keys are ignored — no migration needed)
       for (const b of sim.buildings) {
         b.currentVisitors = [];
-        if (typeof b.cooldown !== 'number' || !Number.isFinite(b.cooldown)) b.cooldown = 0;
-        if (typeof b.stock !== 'number' || !Number.isFinite(b.stock)) b.stock = 0;
-        if (typeof b.buffStock !== 'number' || !Number.isFinite(b.buffStock)) b.buffStock = 0;
       }
       // If the boss flag survived without its boss, reset the timer
       if (sim.isBossActive && !sim.monsters.some(m => m.isBoss)) {

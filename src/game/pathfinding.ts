@@ -93,6 +93,72 @@ export function clinicBedPositions(gx: number, gy: number, capacity: number): { 
   return beds;
 }
 
+/**
+ * Forge station grid positions: ring the forge at (gx, gy), each within
+ * ~1.5 cells. Deterministic order so the nth smithing hunter (sorted by
+ * id) works at the nth anvil. Pure (no DOM).
+ */
+export function forgeStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
+  const offsets: Array<[number, number]> = [
+    [0.9, 0.5],
+    [-0.9, 0.5],
+    [0, 1.1],
+    [0.9, -0.6],
+    [-0.9, -0.6],
+    [0, -1.2],
+    [1.2, 1.0],
+    [-1.2, 1.0],
+  ];
+  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
+  const stations: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) stations.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
+  return stations;
+}
+
+/**
+ * Cauldron station grid positions: ring the lab at (gx, gy), each within
+ * ~1.5 cells. Deterministic order so the nth brewing hunter (sorted by
+ * id) tends the nth vat. Pure (no DOM).
+ */
+export function cauldronStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
+  const offsets: Array<[number, number]> = [
+    [0.8, 0.6],
+    [-0.8, 0.6],
+    [0, 1.2],
+    [1.3, -0.2],
+    [-1.3, -0.2],
+    [0, -1.2],
+    [1.0, 1.0],
+    [-1.0, 1.0],
+  ];
+  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
+  const stations: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) stations.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
+  return stations;
+}
+
+/**
+ * Academy station grid positions: a dojo-yard row/arc facing the academy
+ * at (gx, gy), each within ~1.5 cells. Deterministic order so the nth
+ * training hunter (sorted by id) drills at the nth dummy. Pure (no DOM).
+ */
+export function academyStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
+  const offsets: Array<[number, number]> = [
+    [0, 0.9],
+    [0.9, 0.7],
+    [-0.9, 0.7],
+    [0, 1.4],
+    [1.2, 0.1],
+    [-1.2, 0.1],
+    [0.6, -0.9],
+    [-0.6, -0.9],
+  ];
+  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
+  const stations: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) stations.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
+  return stations;
+}
+
 const clampCell = (v: number, max: number) => Math.max(0, Math.min(max - 1, Math.round(v)));
 
 /** Nearest walkable cell to (cx, cy), spiral search. Falls back to input. */
