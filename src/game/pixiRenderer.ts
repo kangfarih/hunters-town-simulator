@@ -5,13 +5,12 @@ import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel, partyColor } from './s
 import { 
   gridToScreen, screenToGrid, gridDistance, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
 } from './isometric';
-import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from './pathfinding';
-import { 
-  createIsoTileTexture, createHunterFrame, createMonsterFrame, 
+import { reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from './pathfinding';
+import {
+  createIsoTileTexture, createHunterFrame, createMonsterFrame,
   createBuildingTexture, createSkillVfxTexture,
-  createChairTexture, createTableTexture, createBedTexture,
-  createAnvilTexture, createVatTexture, createTrainingDummyTexture
 } from './pixelArtTextures';
+import { clearYards, createYardState, renderYards, stationSpotFor, type YardState } from './objects/yard';
 import { CharacterClass, Hunter, Building } from '../types';
 import { zoneColor } from './types';
 
@@ -65,26 +64,10 @@ export class PixiRenderer {
   private monsterSprites: Map<string, { sprite: Sprite; hpBar: Graphics; nameText?: Text }> = new Map();
   private buildingSprites: Map<string, { sprite: Sprite; levelText: Text; badge: Graphics }> = new Map();
 
-  // Tavern furniture decor (chairs + tables around each TAVERN building)
-  private chairTexture: Texture | null = null;
-  private tableTexture: Texture | null = null;
-  private tavernDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
-
-  // Clinic furniture decor (beds around each CLINIC building)
-  private bedTexture: Texture | null = null;
-  private clinicDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
-
-  // Forge service decor (anvils around each BLACKSMITH building)
-  private anvilTexture: Texture | null = null;
-  private forgeDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
-
-  // Cauldron service decor (brewing vats around each ALCHEMY_LAB building)
-  private vatTexture: Texture | null = null;
-  private cauldronDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
-
-  // Academy service decor (training dummies around each TRAINING_ACADEMY building)
-  private dummyTexture: Texture | null = null;
-  private academyDecor: Map<string, { capacity: number; level: number; sprites: Sprite[] }> = new Map();
+  // Building yard decor (chairs/tables, beds, anvils, vats, dummies).
+  // Painter + tile layout + per-yard render live in src/game/objects/*
+  // (one module per prop); the renderer only owns the per-instance caches.
+  private yards: YardState = createYardState();
 
   // Camera anchor: set once the renderer reports a real (non-zero) screen size,
   // so the town stays centered even if layout wasn't ready during init.
@@ -295,20 +278,85 @@ export class PixiRenderer {
       this.terrainContainer.addChild(label);
     });
 
-    // Region border palisades (static, once). Gate cells are absent from
-    // WALL_CELLS by construction (isWallCell excludes them), so openings
-    // render as plain gaps — no gate visuals of any kind.
-    const wallGfx = new Graphics();
-    for (const cell of WALL_CELLS) {
+    // Directional palisades: thin wall SEGMENTS, not square blocks.
+    // E-W runs (y==39: town-south + forest/volcano line) travel down-right
+    // (32,16) and show their SW (dark) face; N-S runs (x==39: town-east +
+    // graveyard/volcano line) travel down-left (-32,16) and show SE (lit).
+    // Segments overlap 8px into neighbors for a continuous rampart; open
+    // ends at gates/map edges get a taller gate post cap. Gate cells stay
+    // gaps by construction. Sorted back-to-front.
+    const sortedWalls = [...WALL_CELLS].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+    const wallSet = new Set(WALL_CELLS.map(c => `${c.x},${c.y}`));
+    const WH = 24, HL = 20, TW = 6;
+    for (const cell of sortedWalls) {
       const p = gridToScreen(cell.x, cell.y);
-      // Ground shadow ellipse
-      wallGfx.ellipse(p.x, p.y + 16, 20, 9).fill({ color: 0x000000, alpha: 0.3 });
-      // Palisade log: dark outline, mid-brown body, light top edge
-      wallGfx.rect(p.x - 10, p.y - 14, 20, 30).fill({ color: 0x3f2a18 });
-      wallGfx.rect(p.x - 8, p.y - 12, 16, 26).fill({ color: 0x8b5a2b });
-      wallGfx.rect(p.x - 8, p.y - 12, 16, 5).fill({ color: 0xd9a066 });
+      const cx = p.x, cy = p.y + 16; // wall base center (diamond center)
+      const g = new Graphics();
+      const isEW = cell.y === 39;
+      // Run direction (unit * HL) + south-pointing half-thickness normal
+      const ux = (isEW ? 0.8944 : -0.8944) * HL;
+      const uy = 0.4472 * HL;
+      const nx = (isEW ? -0.4472 : 0.4472) * TW;
+      const ny = 0.8944 * TW;
+      // Top-strip corners: P1/P2 = front (south) edge, P3/P4 = back edge
+      const P1 = { x: cx - ux + nx, y: cy - uy + ny - WH };
+      const P2 = { x: cx + ux + nx, y: cy + uy + ny - WH };
+      const P3 = { x: cx + ux - nx, y: cy + uy - ny - WH };
+      const P4 = { x: cx - ux - nx, y: cy - uy - ny - WH };
+      const F1 = { x: P1.x, y: P1.y + WH };
+      const F2 = { x: P2.x, y: P2.y + WH };
+      // Ground shadow stretched along the run
+      g.ellipse(cx, cy + 4, 24, 8).fill({ color: 0x000000, alpha: 0.3 });
+      // Front face (direction-shaded) + top strip
+      const faceColor = isEW ? 0x6b4a26 : 0x8b5a2b;
+      g.moveTo(P1.x, P1.y).lineTo(P2.x, P2.y).lineTo(F2.x, F2.y).lineTo(F1.x, F1.y).closePath()
+        .fill({ color: faceColor });
+      g.moveTo(P1.x, P1.y).lineTo(P2.x, P2.y).lineTo(P3.x, P3.y).lineTo(P4.x, P4.y).closePath()
+        .fill({ color: 0xd9a066 });
+      // Log seams: verticals on the face + cross-seams on the cap
+      for (const t of [-0.5, 0, 0.5]) {
+        const fx = P1.x + (P2.x - P1.x) * (t + 0.5);
+        const fy = P1.y + (P2.y - P1.y) * (t + 0.5);
+        g.moveTo(fx, fy).lineTo(fx, fy + WH).stroke({ color: 0x3f2a18, width: 1.2, alpha: 0.6 });
+        const ax = P1.x + (P2.x - P1.x) * (t + 0.5);
+        const ay = P1.y + (P2.y - P1.y) * (t + 0.5);
+        const bx = P4.x + (P3.x - P4.x) * (t + 0.5);
+        const by = P4.y + (P3.y - P4.y) * (t + 0.5);
+        g.moveTo(ax, ay).lineTo(bx, by).stroke({ color: 0x3f2a18, width: 1, alpha: 0.5 });
+      }
+      // Palisade spikes along the ridge (3 tips leaning south)
+      for (const t of [-0.55, 0, 0.55]) {
+        const bx = cx + ux * 2 * t * 0.5 + nx * 0;
+        const by = cy - WH + ny * 0 - 2;
+        g.moveTo(bx - 5, by + 3).lineTo(bx, by - 6).lineTo(bx + 5, by + 3).closePath()
+          .fill({ color: t < 0 ? 0x8b5a2b : 0xd9a066 });
+      }
+      // Outlines: front face + cap
+      g.moveTo(P1.x, P1.y).lineTo(P2.x, P2.y).lineTo(F2.x, F2.y).lineTo(F1.x, F1.y).closePath()
+        .stroke({ color: 0x2a1a0c, width: 1.5 });
+      g.moveTo(P1.x, P1.y).lineTo(P2.x, P2.y).lineTo(P3.x, P3.y).lineTo(P4.x, P4.y).closePath()
+        .stroke({ color: 0x2a1a0c, width: 1.2 });
+      // Gate/map end posts: taller capped pier where the run breaks
+      const hasPrev = wallSet.has(isEW ? `${cell.x - 1},${cell.y}` : `${cell.x},${cell.y - 1}`);
+      const hasNext = wallSet.has(isEW ? `${cell.x + 1},${cell.y}` : `${cell.x},${cell.y + 1}`);
+      const postAt = (sx: number, sy: number) => {
+        // Mini iso pier: diamond cap + two faces, 8px taller + iron band
+        const pw = 7, ph = 3.5, pwh = WH + 8;
+        g.moveTo(sx - pw, sy - pwh).lineTo(sx, sy + ph - pwh)
+          .lineTo(sx, sy + ph - pwh + pwh).lineTo(sx - pw, sy - pwh + pwh).closePath()
+          .fill({ color: 0x4a2f16 });
+        g.moveTo(sx + pw, sy - pwh).lineTo(sx, sy + ph - pwh)
+          .lineTo(sx, sy + ph - pwh + pwh).lineTo(sx + pw, sy - pwh + pwh).closePath()
+          .fill({ color: 0x7c5228 });
+        g.moveTo(sx, sy - ph - pwh).lineTo(sx + pw, sy - pwh)
+          .lineTo(sx, sy + ph - pwh).lineTo(sx - pw, sy - pwh).closePath()
+          .fill({ color: 0xe8b64c });
+        g.rect(sx - pw, sy - pwh + 10, pw * 2, 3).fill({ color: 0x374151 });
+      };
+      if (!hasPrev) postAt(cx - ux + nx, cy - uy + ny);
+      if (!hasNext) postAt(cx + ux + nx, cy + uy + ny);
+      this.terrainContainer.addChild(g);
     }
-    this.terrainContainer.addChild(wallGfx);
   }
 
   // --------------------------------------------------------------------------
@@ -321,20 +369,8 @@ export class PixiRenderer {
     // 1. Render Buildings
     this.renderBuildings();
 
-    // 1b. Render Tavern Furniture (chairs + tables)
-    this.renderTavernSeating();
-
-    // 1c. Render Clinic Beds
-    this.renderClinicBeds();
-
-    // 1d. Render Forge Anvils
-    this.renderForgeStations();
-
-    // 1e. Render Cauldron Vats
-    this.renderCauldronStations();
-
-    // 1f. Render Academy Dummies
-    this.renderAcademyStations();
+    // 1b-f. Building yards (one module per prop in src/game/objects/*).
+    renderYards(this.yards, { container: this.entitiesContainer, sim: this.simulation });
 
     // 1g. Render Skill Zones (ground discs below sprites)
     this.renderZones();
@@ -411,369 +447,27 @@ export class PixiRenderer {
       bData.levelText.y = screenPos.y - 70;
       bData.levelText.zIndex = bData.sprite.zIndex + 5;
 
-      // Badge highlight if selected or active transactions
+      // Iso selection ring: diamond-hugging double ellipse on the ground
+      // plane (2:1), sized to the 88px platform + margin. Never a circle.
       bData.badge.clear();
       if (this.followTargetBuildingId === b.id) {
-        bData.badge.circle(screenPos.x, screenPos.y + 12, 36).stroke({ color: 0xfacc15, width: 2 });
+        const pulse = 1 + Math.sin(performance.now() / 350) * 0.03;
+        bData.badge.ellipse(screenPos.x, screenPos.y + 16, 50 * pulse, 24 * pulse)
+          .stroke({ color: 0xfacc15, width: 2.5 });
+        bData.badge.ellipse(screenPos.x, screenPos.y + 16, 43 * pulse, 20 * pulse)
+          .stroke({ color: 0xffffff, width: 1, alpha: 0.65 });
+        // Corner ticks on the diamond axes sell the iso snap
+        for (const [dx, dy] of [[50, 0], [-50, 0], [0, 24], [0, -24]] as const) {
+          bData.badge.circle(screenPos.x + dx * pulse, screenPos.y + 16 + dy * pulse, 2)
+            .fill({ color: 0xfacc15 });
+        }
       }
       bData.badge.zIndex = bData.sprite.zIndex - 1;
     });
   }
 
-  /**
-   * Seat grid position for a resting hunter, or null when they have no seat.
-   * Resting hunters (RESTING_TAVERN with that tavern as targetBuildingId,
-   * sorted by id) sit on the tavern's seats; hunters beyond seat count
-   * (shouldn't happen via the capacity gate) render at their sim position.
-   */
-  private seatFor(hunter: Hunter): { x: number; y: number } | null {
-    if (hunter.state !== 'RESTING_TAVERN' || !hunter.targetBuildingId) return null;
-    const tavern = this.simulation.buildings.find(
-      b => b.id === hunter.targetBuildingId && b.type === 'TAVERN'
-    );
-    if (!tavern) return null;
-    const capacity = this.simulation.buildingCapacity(tavern);
-    const resters = this.simulation.hunters
-      .filter(h => h.state === 'RESTING_TAVERN' && h.targetBuildingId === tavern.id)
-      .map(h => h.id)
-      .sort();
-    const idx = resters.indexOf(hunter.id);
-    if (idx < 0) return null;
-    const seats = tavernSeatPositions(tavern.gx, tavern.gy, capacity);
-    return idx < seats.length ? seats[idx] : null;
-  }
-
-  /**
-   * Tavern furniture decor: one chair per buildingCapacity(tavern) seat plus
-   * one round table per 2 chairs at the pair's midpoint. Cached per tavern
-   * id + level, rebuilt when capacity changes.
-   */
-  private renderTavernSeating() {
-    if (!this.chairTexture) this.chairTexture = createChairTexture();
-    if (!this.tableTexture) this.tableTexture = createTableTexture();
-
-    const activeTavernIds = new Set<string>();
-    for (const b of this.simulation.buildings) {
-      if (b.type !== 'TAVERN') continue;
-      activeTavernIds.add(b.id);
-      const capacity = this.simulation.buildingCapacity(b);
-      const cached = this.tavernDecor.get(b.id);
-      if (cached && cached.capacity === capacity && cached.level === b.level) continue;
-
-      // Capacity changed (or first build): drop old sprites and rebuild.
-      if (cached) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.tavernDecor.delete(b.id);
-      }
-
-      const seats = tavernSeatPositions(b.gx, b.gy, capacity);
-      const sprites: Sprite[] = [];
-      for (const seat of seats) {
-        const p = gridToScreen(seat.x, seat.y);
-        const chair = new Sprite(this.chairTexture);
-        chair.anchor.set(0.5, 0.85);
-        chair.x = p.x;
-        chair.y = p.y;
-        chair.zIndex = (seat.x + seat.y) * 100 + 12;
-        this.entitiesContainer.addChild(chair);
-        sprites.push(chair);
-      }
-      // One table per 2 chairs at the pair's midpoint seat position.
-      for (let i = 0; i + 1 < seats.length; i += 2) {
-        const midX = (seats[i].x + seats[i + 1].x) / 2;
-        const midY = (seats[i].y + seats[i + 1].y) / 2;
-        const p = gridToScreen(midX, midY);
-        const table = new Sprite(this.tableTexture);
-        table.anchor.set(0.5, 0.85);
-        table.x = p.x;
-        table.y = p.y;
-        table.zIndex = (midX + midY) * 100 + 11;
-        this.entitiesContainer.addChild(table);
-        sprites.push(table);
-      }
-      this.tavernDecor.set(b.id, { capacity, level: b.level, sprites });
-    }
-
-    // Cleanup decor for removed taverns.
-    for (const [id, cached] of this.tavernDecor.entries()) {
-      if (!activeTavernIds.has(id)) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.tavernDecor.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Bed grid position for a recovering hunter, or null when they have no bed.
-   * Recovering hunters (RECOVERING_CLINIC with that clinic as targetBuildingId,
-   * sorted by id) lie in the clinic's beds; hunters beyond bed count
-   * (shouldn't happen via the capacity gate) render at their sim position.
-   */
-  private bedFor(hunter: Hunter): { x: number; y: number } | null {
-    if (hunter.state !== 'RECOVERING_CLINIC' || !hunter.targetBuildingId) return null;
-    const clinic = this.simulation.buildings.find(
-      b => b.id === hunter.targetBuildingId && b.type === 'CLINIC'
-    );
-    if (!clinic) return null;
-    const capacity = this.simulation.buildingCapacity(clinic);
-    const patients = this.simulation.hunters
-      .filter(h => h.state === 'RECOVERING_CLINIC' && h.targetBuildingId === clinic.id)
-      .map(h => h.id)
-      .sort();
-    const idx = patients.indexOf(hunter.id);
-    if (idx < 0) return null;
-    const beds = clinicBedPositions(clinic.gx, clinic.gy, capacity);
-    return idx < beds.length ? beds[idx] : null;
-  }
-
-  /**
-   * Clinic furniture decor: one bed per buildingCapacity(clinic). Cached
-   * per clinic id + level, rebuilt when capacity changes.
-   */
-  private renderClinicBeds() {
-    if (!this.bedTexture) this.bedTexture = createBedTexture();
-
-    const activeClinicIds = new Set<string>();
-    for (const b of this.simulation.buildings) {
-      if (b.type !== 'CLINIC') continue;
-      activeClinicIds.add(b.id);
-      const capacity = this.simulation.buildingCapacity(b);
-      const cached = this.clinicDecor.get(b.id);
-      if (cached && cached.capacity === capacity && cached.level === b.level) continue;
-
-      // Capacity changed (or first build): drop old sprites and rebuild.
-      if (cached) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.clinicDecor.delete(b.id);
-      }
-
-      const beds = clinicBedPositions(b.gx, b.gy, capacity);
-      const sprites: Sprite[] = [];
-      for (const bed of beds) {
-        const p = gridToScreen(bed.x, bed.y);
-        const sprite = new Sprite(this.bedTexture);
-        sprite.anchor.set(0.5, 0.85);
-        sprite.x = p.x;
-        sprite.y = p.y;
-        sprite.zIndex = (bed.x + bed.y) * 100 + 12;
-        this.entitiesContainer.addChild(sprite);
-        sprites.push(sprite);
-      }
-      this.clinicDecor.set(b.id, { capacity, level: b.level, sprites });
-    }
-
-    // Cleanup decor for removed clinics.
-    for (const [id, cached] of this.clinicDecor.entries()) {
-      if (!activeClinicIds.has(id)) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.clinicDecor.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Anvil grid position for a smithing hunter, or null when they have none.
-   * Smithing hunters (UPGRADING_GEAR with that forge as targetBuildingId,
-   * sorted by id) work at the forge's stations; hunters beyond station count
-   * (shouldn't happen via the capacity gate) render at their sim position.
-   */
-  private forgeStationFor(hunter: Hunter): { x: number; y: number } | null {
-    if (hunter.state !== 'UPGRADING_GEAR' || !hunter.targetBuildingId) return null;
-    const forge = this.simulation.buildings.find(
-      b => b.id === hunter.targetBuildingId && b.type === 'BLACKSMITH'
-    );
-    if (!forge) return null;
-    const capacity = this.simulation.buildingCapacity(forge);
-    const smiths = this.simulation.hunters
-      .filter(h => h.state === 'UPGRADING_GEAR' && h.targetBuildingId === forge.id)
-      .map(h => h.id)
-      .sort();
-    const idx = smiths.indexOf(hunter.id);
-    if (idx < 0) return null;
-    const stations = forgeStationPositions(forge.gx, forge.gy, capacity);
-    return idx < stations.length ? stations[idx] : null;
-  }
-
-  /**
-   * Forge station decor: one anvil per buildingCapacity(forge). Cached
-   * per forge id + level, rebuilt when capacity changes.
-   */
-  private renderForgeStations() {
-    if (!this.anvilTexture) this.anvilTexture = createAnvilTexture();
-
-    const activeForgeIds = new Set<string>();
-    for (const b of this.simulation.buildings) {
-      if (b.type !== 'BLACKSMITH') continue;
-      activeForgeIds.add(b.id);
-      const capacity = this.simulation.buildingCapacity(b);
-      const cached = this.forgeDecor.get(b.id);
-      if (cached && cached.capacity === capacity && cached.level === b.level) continue;
-
-      // Capacity changed (or first build): drop old sprites and rebuild.
-      if (cached) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.forgeDecor.delete(b.id);
-      }
-
-      const stations = forgeStationPositions(b.gx, b.gy, capacity);
-      const sprites: Sprite[] = [];
-      for (const station of stations) {
-        const p = gridToScreen(station.x, station.y);
-        const sprite = new Sprite(this.anvilTexture);
-        sprite.anchor.set(0.5, 0.85);
-        sprite.x = p.x;
-        sprite.y = p.y;
-        sprite.zIndex = (station.x + station.y) * 100 + 12;
-        this.entitiesContainer.addChild(sprite);
-        sprites.push(sprite);
-      }
-      this.forgeDecor.set(b.id, { capacity, level: b.level, sprites });
-    }
-
-    // Cleanup decor for removed forges.
-    for (const [id, cached] of this.forgeDecor.entries()) {
-      if (!activeForgeIds.has(id)) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.forgeDecor.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Vat grid position for a brewing hunter, or null when they have none.
-   * Brewing hunters (BREWING_ELIXIR with that lab as targetBuildingId,
-   * sorted by id) tend the lab's vats; hunters beyond station count
-   * (shouldn't happen via the capacity gate) render at their sim position.
-   */
-  private cauldronStationFor(hunter: Hunter): { x: number; y: number } | null {
-    if (hunter.state !== 'BREWING_ELIXIR' || !hunter.targetBuildingId) return null;
-    const lab = this.simulation.buildings.find(
-      b => b.id === hunter.targetBuildingId && b.type === 'ALCHEMY_LAB'
-    );
-    if (!lab) return null;
-    const capacity = this.simulation.buildingCapacity(lab);
-    const brewers = this.simulation.hunters
-      .filter(h => h.state === 'BREWING_ELIXIR' && h.targetBuildingId === lab.id)
-      .map(h => h.id)
-      .sort();
-    const idx = brewers.indexOf(hunter.id);
-    if (idx < 0) return null;
-    const stations = cauldronStationPositions(lab.gx, lab.gy, capacity);
-    return idx < stations.length ? stations[idx] : null;
-  }
-
-  /**
-   * Cauldron station decor: one vat per buildingCapacity(lab). Cached
-   * per lab id + level, rebuilt when capacity changes.
-   */
-  private renderCauldronStations() {
-    if (!this.vatTexture) this.vatTexture = createVatTexture();
-
-    const activeLabIds = new Set<string>();
-    for (const b of this.simulation.buildings) {
-      if (b.type !== 'ALCHEMY_LAB') continue;
-      activeLabIds.add(b.id);
-      const capacity = this.simulation.buildingCapacity(b);
-      const cached = this.cauldronDecor.get(b.id);
-      if (cached && cached.capacity === capacity && cached.level === b.level) continue;
-
-      // Capacity changed (or first build): drop old sprites and rebuild.
-      if (cached) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.cauldronDecor.delete(b.id);
-      }
-
-      const stations = cauldronStationPositions(b.gx, b.gy, capacity);
-      const sprites: Sprite[] = [];
-      for (const station of stations) {
-        const p = gridToScreen(station.x, station.y);
-        const sprite = new Sprite(this.vatTexture);
-        sprite.anchor.set(0.5, 0.85);
-        sprite.x = p.x;
-        sprite.y = p.y;
-        sprite.zIndex = (station.x + station.y) * 100 + 12;
-        this.entitiesContainer.addChild(sprite);
-        sprites.push(sprite);
-      }
-      this.cauldronDecor.set(b.id, { capacity, level: b.level, sprites });
-    }
-
-    // Cleanup decor for removed labs.
-    for (const [id, cached] of this.cauldronDecor.entries()) {
-      if (!activeLabIds.has(id)) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.cauldronDecor.delete(id);
-      }
-    }
-  }
-
-  /**
-   * Dummy grid position for a training hunter, or null when they have none.
-   * Training hunters (LEARNING_SKILL with that academy as targetBuildingId,
-   * sorted by id) drill at the academy's dummies; hunters beyond station count
-   * (shouldn't happen via the capacity gate) render at their sim position.
-   */
-  private academyStationFor(hunter: Hunter): { x: number; y: number } | null {
-    if (hunter.state !== 'LEARNING_SKILL' || !hunter.targetBuildingId) return null;
-    const academy = this.simulation.buildings.find(
-      b => b.id === hunter.targetBuildingId && b.type === 'TRAINING_ACADEMY'
-    );
-    if (!academy) return null;
-    const capacity = this.simulation.buildingCapacity(academy);
-    const trainees = this.simulation.hunters
-      .filter(h => h.state === 'LEARNING_SKILL' && h.targetBuildingId === academy.id)
-      .map(h => h.id)
-      .sort();
-    const idx = trainees.indexOf(hunter.id);
-    if (idx < 0) return null;
-    const stations = academyStationPositions(academy.gx, academy.gy, capacity);
-    return idx < stations.length ? stations[idx] : null;
-  }
-
-  /**
-   * Academy station decor: one dummy per buildingCapacity(academy). Cached
-   * per academy id + level, rebuilt when capacity changes.
-   */
-  private renderAcademyStations() {
-    if (!this.dummyTexture) this.dummyTexture = createTrainingDummyTexture();
-
-    const activeAcademyIds = new Set<string>();
-    for (const b of this.simulation.buildings) {
-      if (b.type !== 'TRAINING_ACADEMY') continue;
-      activeAcademyIds.add(b.id);
-      const capacity = this.simulation.buildingCapacity(b);
-      const cached = this.academyDecor.get(b.id);
-      if (cached && cached.capacity === capacity && cached.level === b.level) continue;
-
-      // Capacity changed (or first build): drop old sprites and rebuild.
-      if (cached) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.academyDecor.delete(b.id);
-      }
-
-      const stations = academyStationPositions(b.gx, b.gy, capacity);
-      const sprites: Sprite[] = [];
-      for (const station of stations) {
-        const p = gridToScreen(station.x, station.y);
-        const sprite = new Sprite(this.dummyTexture);
-        sprite.anchor.set(0.5, 0.85);
-        sprite.x = p.x;
-        sprite.y = p.y;
-        sprite.zIndex = (station.x + station.y) * 100 + 12;
-        this.entitiesContainer.addChild(sprite);
-        sprites.push(sprite);
-      }
-      this.academyDecor.set(b.id, { capacity, level: b.level, sprites });
-    }
-
-    // Cleanup decor for removed academies.
-    for (const [id, cached] of this.academyDecor.entries()) {
-      if (!activeAcademyIds.has(id)) {
-        for (const s of cached.sprites) this.entitiesContainer.removeChild(s);
-        this.academyDecor.delete(id);
-      }
-    }
-  }
+  // Yard spot resolvers + decor renders live in src/game/objects/*
+  // (chair/bed/anvil/vat/dummy, orchestrated by objects/yard.ts).
 
   /**
    * Skill-zone layer (below sprites): soft ground discs + kind motifs.
@@ -876,17 +570,12 @@ export class PixiRenderer {
     this.simulation.hunters.forEach(hunter => {
       let hData = this.hunterSprites.get(hunter.id);
 
-      // Seated resters use their idle frame on the seat position;
-      // clinic patients lie in their bed position (bed sprite beneath);
-      // smiths work at their anvil, brewers at their vat, trainees at their dummy.
-      const seat = this.seatFor(hunter);
-      const bed = seat ? null : this.bedFor(hunter);
-      const anvil = seat || bed ? null : this.forgeStationFor(hunter);
-      const vat = seat || bed || anvil ? null : this.cauldronStationFor(hunter);
-      const dummy = seat || bed || anvil || vat ? null : this.academyStationFor(hunter);
-      const spot = seat ?? bed ?? anvil ?? vat ?? dummy;
-      const px = spot ? spot.x : hunter.gx;
-      const py = spot ? spot.y : hunter.gy;
+      // Yard stations (chairs/beds/anvils/vats/dummies in src/game/objects):
+      // sitters stand slightly SOUTH of their furniture so the iso prop
+      // peeks behind them instead of hiding inside the hunter sprite.
+      const spot = stationSpotFor(this.simulation, hunter);
+      const px = spot ? spot.x + 0.15 : hunter.gx;
+      const py = spot ? spot.y + 0.15 : hunter.gy;
 
       // Determine action for frame lookup
       let action: 'idle' | 'walk' | 'attack' | 'cast' = 'idle';
@@ -1386,42 +1075,7 @@ export class PixiRenderer {
     this.hunterWhirl.clear();
     this.monsterSprites.clear();
     this.buildingSprites.clear();
-    for (const cached of this.tavernDecor.values()) {
-      for (const s of cached.sprites) {
-        try { s.destroy(); } catch { /* ignore */ }
-      }
-    }
-    this.tavernDecor.clear();
-    for (const cached of this.clinicDecor.values()) {
-      for (const s of cached.sprites) {
-        try { s.destroy(); } catch { /* ignore */ }
-      }
-    }
-    this.clinicDecor.clear();
-    for (const cached of this.forgeDecor.values()) {
-      for (const s of cached.sprites) {
-        try { s.destroy(); } catch { /* ignore */ }
-      }
-    }
-    this.forgeDecor.clear();
-    for (const cached of this.cauldronDecor.values()) {
-      for (const s of cached.sprites) {
-        try { s.destroy(); } catch { /* ignore */ }
-      }
-    }
-    this.cauldronDecor.clear();
-    for (const cached of this.academyDecor.values()) {
-      for (const s of cached.sprites) {
-        try { s.destroy(); } catch { /* ignore */ }
-      }
-    }
-    this.academyDecor.clear();
-    this.chairTexture = null;
-    this.tableTexture = null;
-    this.bedTexture = null;
-    this.anvilTexture = null;
-    this.vatTexture = null;
-    this.dummyTexture = null;
+    clearYards(this.yards);
   }
 
   public destroy() {

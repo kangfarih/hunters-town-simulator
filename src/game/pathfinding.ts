@@ -88,114 +88,36 @@ export function isWalkableCell(cx: number, cy: number): boolean {
 }
 
 /**
- * Tavern seat grid positions: fan out south/east of the tavern at
- * (gx, gy), each within ~1.5 cells. Deterministic order so the nth
- * resting hunter (sorted by id) sits on the nth seat. Pure (no DOM).
+ * Tavern seats: tile-center rows due south of the facade, filled west to
+ * east, 3 per row, next row one block further south. Row 0 sits a full
+ * tile clear of the 88px platform (sy>=48px); all depth stays in front
+ * of the building. Deterministic order.
  */
-export function tavernSeatPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  const offsets: Array<[number, number]> = [
-    [0.8, 0.6],
-    [-0.8, 0.6],
-    [0, 1.2],
-    [1.3, -0.2],
-    [-1.3, -0.2],
-    [0, -1.2],
-    [1.0, 1.0],
-    [-1.0, 1.0],
-  ];
-  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
-  const seats: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) seats.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
-  return seats;
-}
+export { tavernSeatPositions } from './objects/chair';
 
 /**
- * Clinic bed grid positions: flank the clinic at (gx, gy), each within
- * ~1.5 cells. Deterministic order so the nth recovering hunter (sorted by
- * id) lies in the nth bed. Pure (no DOM).
+ * Clinic beds: same 3-wide south rows as tavern (see tavern). West to
+ * east per row, next row one block south. Nth patient takes nth bed.
  */
-export function clinicBedPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  const offsets: Array<[number, number]> = [
-    [0.9, 0.5],
-    [-0.9, 0.5],
-    [0, 1.1],
-    [0.9, -0.6],
-    [-0.9, -0.6],
-    [0, -1.2],
-    [1.2, 1.0],
-    [-1.2, 1.0],
-  ];
-  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
-  const beds: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) beds.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
-  return beds;
-}
+export { clinicBedPositions } from './objects/bed';
 
 /**
- * Forge station grid positions: ring the forge at (gx, gy), each within
- * ~1.5 cells. Deterministic order so the nth smithing hunter (sorted by
- * id) works at the nth anvil. Pure (no DOM).
+ * Forge stations: same 3-wide south rows as tavern (see tavern). West to
+ * east per row, next row one block south. Nth smith takes nth anvil.
  */
-export function forgeStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  const offsets: Array<[number, number]> = [
-    [0.9, 0.5],
-    [-0.9, 0.5],
-    [0, 1.1],
-    [0.9, -0.6],
-    [-0.9, -0.6],
-    [0, -1.2],
-    [1.2, 1.0],
-    [-1.2, 1.0],
-  ];
-  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
-  const stations: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) stations.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
-  return stations;
-}
+export { forgeStationPositions } from './objects/anvil';
 
 /**
- * Cauldron station grid positions: ring the lab at (gx, gy), each within
- * ~1.5 cells. Deterministic order so the nth brewing hunter (sorted by
- * id) tends the nth vat. Pure (no DOM).
+ * Cauldron stations: same 3-wide south rows as tavern (see tavern).
+ * West to east per row, next row one block south. Nth brewer, nth vat.
  */
-export function cauldronStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  const offsets: Array<[number, number]> = [
-    [0.8, 0.6],
-    [-0.8, 0.6],
-    [0, 1.2],
-    [1.3, -0.2],
-    [-1.3, -0.2],
-    [0, -1.2],
-    [1.0, 1.0],
-    [-1.0, 1.0],
-  ];
-  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
-  const stations: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) stations.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
-  return stations;
-}
+export { cauldronStationPositions } from './objects/vat';
 
 /**
- * Academy station grid positions: a dojo-yard row/arc facing the academy
- * at (gx, gy), each within ~1.5 cells. Deterministic order so the nth
- * training hunter (sorted by id) drills at the nth dummy. Pure (no DOM).
+ * Academy dummies: same 3-wide south rows as tavern (see tavern). West
+ * to east per row, next row one block south. Nth trainee, nth dummy.
  */
-export function academyStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  const offsets: Array<[number, number]> = [
-    [0, 0.9],
-    [0.9, 0.7],
-    [-0.9, 0.7],
-    [0, 1.4],
-    [1.2, 0.1],
-    [-1.2, 0.1],
-    [0.6, -0.9],
-    [-0.6, -0.9],
-  ];
-  const n = Math.max(0, Math.min(Math.floor(capacity), offsets.length));
-  const stations: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) stations.push({ x: gx + offsets[i][0], y: gy + offsets[i][1] });
-  return stations;
-}
+export { academyStationPositions } from './objects/dummy';
 
 const clampCell = (v: number, max: number) => Math.max(0, Math.min(max - 1, Math.round(v)));
 

@@ -1,18 +1,19 @@
 import { Texture } from 'pixi.js';
 import { TILE_WIDTH, TILE_HEIGHT } from './isometric';
 import { CharacterClass, BuildingType } from '../types';
+import {
+  createPixelCanvas, isoPath, fillIsoTop, drawIsoBox, drawIsoSlab,
+  drawIsoPyramid, faceQuad, fillQuad, drawIsoDoor, drawIsoWindow,
+  drawIsoCross,
+} from './objects/iso';
 
-// Helper to create an offscreen canvas with nearest-neighbor crisp pixel scaling
-function createPixelCanvas(width: number, height: number): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.imageSmoothingEnabled = false;
-  }
-  return canvas;
-}
+// Yard-prop painters live in src/game/objects/* (one module per prop:
+// texture + tile layout + decor render). Re-exported here so existing
+// imports keep working; new code should import from objects directly.
+export {
+  createChairTexture, createTableTexture, createBedTexture,
+  createAnvilTexture, createVatTexture, createTrainingDummyTexture,
+} from './objects';
 
 // --------------------------------------------------------------------------
 // 1. ISOMETRIC TERRAIN TILES
@@ -579,8 +580,16 @@ export function createMonsterFrame(type: string, frame: number): Texture {
 }
 
 // --------------------------------------------------------------------------
-// 4. TOWN BUILDINGS (16-bit Isometric Structures)
+// 4. TOWN BUILDINGS (true 2:1 isometric structures)
 // --------------------------------------------------------------------------
+// Convention: 2:1 dimetric. Verticals stay vertical, horizontals run
+// +/-26.5deg. Every solid is an iso box: top diamond + SW (left, dark)
+// face + SE (right, lit) face. Roofs are wider diamond slabs or pyramids
+// so the silhouette stays on the iso grid from every tile.
+
+// Iso canvas primitives (isoPath/fillIsoTop/drawIsoBox/drawIsoSlab/
+// drawIsoPyramid/faceQuad/fillQuad/drawIsoDoor/drawIsoWindow/drawIsoCross)
+// live in src/game/objects/iso.ts and are imported above.
 
 export function createBuildingTexture(type: BuildingType, level: number): Texture {
   const w = 128;
@@ -591,268 +600,236 @@ export function createBuildingTexture(type: BuildingType, level: number): Textur
   const cx = 64;
   const groundY = 88;
 
-  // Ground footprint shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  // Grounded footprint: soft outer shadow (south-offset) + tight contact
+  // shadow, then a platform slab WITH vertical thickness so the base plugs
+  // into the ground instead of floating as a flat diamond.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
   ctx.beginPath();
-  ctx.ellipse(cx, groundY + 12, 44, 20, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, groundY + 16, 46, 15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+  ctx.beginPath();
+  ctx.ellipse(cx, groundY + 12, 35, 11, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Stone Foundation / Platform
-  ctx.fillStyle = '#475569';
+  // Stone foundation slab: top diamond centered at (cx, groundY-2),
+  // 44x22, extruded 6px down into the tile.
+  const platY = groundY - 2, platHW = 44, platHH = 22, platT = 6;
+  // SW skirt (dark)
   ctx.beginPath();
-  ctx.moveTo(cx, groundY + 20);
-  ctx.lineTo(cx + 44, groundY - 2);
-  ctx.lineTo(cx, groundY - 24);
-  ctx.lineTo(cx - 44, groundY - 2);
+  ctx.moveTo(cx - platHW, platY); ctx.lineTo(cx, platY + platHH);
+  ctx.lineTo(cx, platY + platHH + platT); ctx.lineTo(cx - platHW, platY + platT);
   ctx.closePath();
-  ctx.fill();
+  ctx.fillStyle = '#2b3548'; ctx.fill();
+  // SE skirt (mid)
+  ctx.beginPath();
+  ctx.moveTo(cx + platHW, platY); ctx.lineTo(cx, platY + platHH);
+  ctx.lineTo(cx, platY + platHH + platT); ctx.lineTo(cx + platHW, platY + platT);
+  ctx.closePath();
+  ctx.fillStyle = '#3a455c'; ctx.fill();
+  // Slab top
+  ctx.beginPath();
+  ctx.moveTo(cx, platY - platHH);
+  ctx.lineTo(cx + platHW, platY);
+  ctx.lineTo(cx, platY + platHH);
+  ctx.lineTo(cx - platHW, platY);
+  ctx.closePath();
+  ctx.fillStyle = '#5b6b84'; ctx.fill();
+  // Cobble hints on the slab top (kept inside the diamond)
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx, platY - platHH);
+  ctx.lineTo(cx + platHW, platY);
+  ctx.lineTo(cx, platY + platHH);
+  ctx.lineTo(cx - platHW, platY);
+  ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  for (let r = -18; r <= 18; r += 6) {
+    ctx.fillRect(cx - 40, platY + r, 80, 1);
+  }
+  ctx.restore();
   ctx.strokeStyle = '#1e293b';
   ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, platY - platHH);
+  ctx.lineTo(cx + platHW, platY);
+  ctx.lineTo(cx, platY + platHH);
+  ctx.lineTo(cx - platHW, platY);
+  ctx.closePath();
+  ctx.stroke();
+  // Contact AO: dark 2px line along the south rim (W-S-E) welds base to soil
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - platHW, platY + platT);
+  ctx.lineTo(cx, platY + platHH + platT);
+  ctx.lineTo(cx + platHW, platY + platT);
+  ctx.stroke();
+  // Doorstep stone at the south tip where corner doors land (baseY+bh≈+18)
+  ctx.fillStyle = '#94a3b8';
+  ctx.beginPath();
+  ctx.moveTo(cx, platY + platHH - 8);
+  ctx.lineTo(cx + 9, platY + platHH - 4);
+  ctx.lineTo(cx, platY + platHH);
+  ctx.lineTo(cx - 9, platY + platHH - 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Main Walls & Isometric Structure
+  // True isometric bodies: every branch builds an iso box (or two),
+  // then a roof slab / pyramid on the top diamond. Props stay as small
+  // ground billboards in front so they never break the iso silhouette.
+  let apexY = groundY - 78;
   if (type === 'TOWN_HALL') {
-    // Grand Sanctuary / Castle Manor
-    // Left wall
-    ctx.fillStyle = '#64748b';
-    ctx.fillRect(cx - 36, groundY - 50, 36, 40);
-    // Right wall (lit)
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillRect(cx, groundY - 50, 36, 40);
-
-    // Mansard Red Roof
-    ctx.fillStyle = '#991b1b';
-    ctx.beginPath();
-    ctx.moveTo(cx - 40, groundY - 50);
-    ctx.lineTo(cx, groundY - 72);
-    ctx.lineTo(cx + 40, groundY - 50);
-    ctx.lineTo(cx, groundY - 40);
-    ctx.closePath();
-    ctx.fill();
-
-    // Central Clock / Sanctuary Crest Tower
-    ctx.fillStyle = '#b91c1c';
-    ctx.fillRect(cx - 12, groundY - 88, 24, 24);
+    const bw = 32, bh = 16, wh = 30, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#7d8aa0', '#525f77', '#94a3b8');
+    drawIsoPyramid(ctx, cx, yTop, bw + 7, bh + 4, 22, '#7f1d1d', '#b91c1c');
+    apexY = yTop - 24;
+    // Crest tower: small iso box riding the roof center
+    drawIsoBox(ctx, cx, yTop - 4, 11, 6, 16, '#a31616', '#7f1d1d', '#dc2626');
     ctx.fillStyle = '#fde047';
-    ctx.beginPath();
-    ctx.arc(cx, groundY - 76, 5, 0, Math.PI * 2);
-    ctx.fill(); // Gold clock face
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx - 1, groundY - 79, 2, 4);
-
-    // Large Oak Castle Gate
+    ctx.beginPath(); ctx.arc(cx, yTop - 16, 4, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#451a03';
-    ctx.fillRect(cx - 10, groundY - 30, 20, 26);
-    ctx.fillStyle = '#eab308';
-    ctx.fillRect(cx - 8, groundY - 18, 4, 4); // golden studs
-    ctx.fillRect(cx + 4, groundY - 18, 4, 4);
-
-    // Royal Banner
+    ctx.fillRect(cx - 1, yTop - 18, 2, 4);
+    // Windows + gate seated IN the wall planes (SE door = main entry)
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'L', 0.28, 0.58, 10, 18);
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'R', 0.28, 0.58, 10, 18);
+    drawIsoDoor(ctx, cx, baseY, bw, bh, wh, 'R', 0.62, 0.9, 22);
     ctx.fillStyle = '#dc2626';
-    ctx.fillRect(cx - 4, groundY - 60, 8, 16);
+    ctx.fillRect(cx - 4, yTop + 2, 8, 14);
     ctx.fillStyle = '#facc15';
-    ctx.fillRect(cx - 2, groundY - 56, 4, 6); // Lion emblem
+    ctx.fillRect(cx - 2, yTop + 5, 4, 5);
   } else if (type === 'BLACKSMITH') {
-    // Stone Forge & Anvil
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(cx - 34, groundY - 42, 68, 36);
-
-    // Slate roof
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.moveTo(cx - 38, groundY - 42);
-    ctx.lineTo(cx, groundY - 62);
-    ctx.lineTo(cx + 38, groundY - 42);
-    ctx.closePath();
-    ctx.fill();
-
-    // Stone Chimney with glowing embers
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(cx + 18, groundY - 75, 12, 30);
-    // Glowing smoke/embers
+    const bw = 32, bh = 16, wh = 26, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#3d4a61', '#273142', '#475569');
+    drawIsoSlab(ctx, cx, yTop, bw + 8, bh + 4, 7, '#2b3548', '#141c2b', '#1e293b');
+    apexY = yTop - 12;
+    // Chimney: iso column on the SE roof slope + ember cap
+    drawIsoBox(ctx, cx + 16, yTop - 2, 7, 4, 22, '#5b6b84', '#3a455c', '#64748b');
     ctx.fillStyle = '#ea580c';
-    ctx.fillRect(cx + 20, groundY - 78, 8, 5);
+    ctx.fillRect(cx + 12, yTop - 30, 8, 4);
     ctx.fillStyle = '#facc15';
-    ctx.fillRect(cx + 22, groundY - 82, 4, 4);
-
-    // Open forge hearth with red/yellow glow
-    ctx.fillStyle = '#ea580c';
-    ctx.fillRect(cx - 22, groundY - 24, 16, 14);
-    ctx.fillStyle = '#fef08a';
-    ctx.fillRect(cx - 20, groundY - 21, 12, 9);
-
-    // Anvil outside
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx + 4, groundY - 14, 12, 10); // stump
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(cx + 2, groundY - 18, 16, 5); // anvil iron
-
-    // Blacksmith Sign with Crossed Swords
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx - 30, groundY - 48, 16, 10);
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillRect(cx - 26, groundY - 46, 8, 2);
-    ctx.fillRect(cx - 26, groundY - 43, 8, 2);
+    ctx.fillRect(cx + 14, yTop - 33, 4, 3);
+    // Forge hearth glow on SW face, lamp on SE, iron door on SE.
+    // (No baked anvil — the tile-snapped anvil decor covers the yard.)
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'L', 0.24, 0.6, 8, 17, '#ea580c', '#fef08a');
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'R', 0.2, 0.44, 10, 17);
+    drawIsoDoor(ctx, cx, baseY, bw, bh, wh, 'R', 0.52, 0.86, 17, '#1c0f08', '#eab308');
   } else if (type === 'ALCHEMY_LAB') {
-    // Magical Turret with Purple Roof & Bubbling Potions
-    ctx.fillStyle = '#581c87';
-    ctx.fillRect(cx - 28, groundY - 45, 56, 38);
-
-    // Conical Witch/Alchemist Roof
-    ctx.fillStyle = '#7e22ce';
-    ctx.beginPath();
-    ctx.moveTo(cx - 34, groundY - 45);
-    ctx.lineTo(cx, groundY - 78);
-    ctx.lineTo(cx + 34, groundY - 45);
-    ctx.closePath();
-    ctx.fill();
-
-    // Glowing window with green mystic light
-    ctx.fillStyle = '#22c55e';
-    ctx.fillRect(cx - 8, groundY - 35, 16, 16);
-    ctx.fillStyle = '#86efac';
-    ctx.fillRect(cx - 6, groundY - 33, 5, 5);
-
-    // Cauldron outside with boiling green potion
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(cx - 26, groundY - 16, 14, 12);
-    ctx.fillStyle = '#10b981';
-    ctx.beginPath();
-    ctx.arc(cx - 19, groundY - 16, 6, Math.PI, 0);
-    ctx.fill();
-
-    // Potion Flasks on table
-    ctx.fillStyle = '#ef4444'; // Red HP flask
-    ctx.fillRect(cx + 8, groundY - 14, 5, 7);
-    ctx.fillStyle = '#3b82f6'; // Blue MP flask
-    ctx.fillRect(cx + 16, groundY - 14, 5, 7);
-  } else if (type === 'TAVERN') {
-    // Cozy Half-Timber Inn with Beer Mug Sign
-    ctx.fillStyle = '#fef3c7'; // Plaster wall
-    ctx.fillRect(cx - 32, groundY - 44, 64, 38);
-    // Dark timber beams
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx - 32, groundY - 44, 4, 38);
-    ctx.fillRect(cx + 28, groundY - 44, 4, 38);
-    ctx.fillRect(cx - 2, groundY - 44, 4, 38);
-    ctx.fillRect(cx - 32, groundY - 26, 64, 4);
-
-    // Warm Thatch / Tile Roof
-    ctx.fillStyle = '#b45309';
-    ctx.beginPath();
-    ctx.moveTo(cx - 36, groundY - 44);
-    ctx.lineTo(cx, groundY - 68);
-    ctx.lineTo(cx + 36, groundY - 44);
-    ctx.closePath();
-    ctx.fill();
-
-    // Oak door
-    ctx.fillStyle = '#451a03';
-    ctx.fillRect(cx - 8, groundY - 22, 16, 20);
-
-    // Beer Stein Signboard
-    ctx.fillStyle = '#fde047';
-    ctx.fillRect(cx + 12, groundY - 38, 10, 10);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(cx + 12, groundY - 40, 10, 3); // foam
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx + 22, groundY - 36, 3, 6); // handle
-
-    // Wine Barrels outside
-    ctx.fillStyle = '#92400e';
-    ctx.fillRect(cx - 26, groundY - 14, 10, 12);
-  } else if (type === 'TRAINING_ACADEMY') {
-    // Martial Dojo Pagoda Roof & Weapon Racks
-    ctx.fillStyle = '#991b1b';
-    ctx.fillRect(cx - 30, groundY - 44, 60, 38);
-
-    // Pagoda Tiered Roof
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.moveTo(cx - 38, groundY - 44);
-    ctx.lineTo(cx, groundY - 66);
-    ctx.lineTo(cx + 38, groundY - 44);
-    ctx.closePath();
-    ctx.fill();
-    // Gold roof crest
+    const bw = 28, bh = 14, wh = 28, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#6d28d9', '#4c1d95', '#7e22ce');
+    drawIsoPyramid(ctx, cx, yTop, bw + 7, bh + 4, 26, '#5b21b6', '#8b5cf6');
+    apexY = yTop - 28;
+    // Star tip on the cone
     ctx.fillStyle = '#facc15';
-    ctx.fillRect(cx - 6, groundY - 69, 12, 4);
-
-    // Straw Training Dummy outside
+    ctx.fillRect(cx - 1, apexY - 2, 3, 3);
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'L', 0.28, 0.58, 11, 19, '#22c55e', '#86efac');
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'R', 0.28, 0.58, 11, 19, '#22c55e', '#86efac');
+    drawIsoDoor(ctx, cx, baseY, bw, bh, wh, 'R', 0.62, 0.9, 19, '#1e1b4b', '#a7f3d0');
+    // (No baked cauldron/flasks — tile-snapped vat decor covers the yard.)
+  } else if (type === 'TAVERN') {
+    const bw = 30, bh = 15, wh = 26, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#e8d5a8', '#c9b088', '#fef3c7');
+    // Timber corner posts (verticals stay vertical) + sloped mid beams
+    // that follow each face's top-edge slope instead of spanning horizontal.
     ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx - 22, groundY - 24, 4, 20); // pole
-    ctx.fillStyle = '#fde047';
-    ctx.fillRect(cx - 26, groundY - 22, 12, 10); // straw body
-    ctx.fillRect(cx - 24, groundY - 28, 8, 6); // head
-
-    // Weapon Rack with Spears & Swords
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx + 10, groundY - 16, 16, 12);
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillRect(cx + 12, groundY - 24, 2, 18);
-    ctx.fillRect(cx + 16, groundY - 24, 2, 18);
-    ctx.fillRect(cx + 20, groundY - 24, 2, 18);
+    ctx.fillRect(cx - bw - 1, yTop, 3, wh);
+    ctx.fillRect(cx - 1, yTop + bh, 3, wh);
+    ctx.fillRect(cx + bw - 2, yTop, 3, wh);
+    ctx.strokeStyle = '#78350f';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - bw, yTop + wh / 2); ctx.lineTo(cx, yTop + bh + wh / 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx + bw, yTop + wh / 2); ctx.lineTo(cx, yTop + bh + wh / 2);
+    ctx.stroke();
+    drawIsoSlab(ctx, cx, yTop, bw + 8, bh + 4, 7, '#c47a1a', '#7c4a10', '#b45309');
+    apexY = yTop - 12;
+    drawIsoDoor(ctx, cx, baseY, bw, bh, wh, 'R', 0.6, 0.9, 18);
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'L', 0.28, 0.58, 10, 17, '#fbbf24', '#fef3c7');
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'R', 0.2, 0.44, 10, 17, '#fbbf24', '#fef3c7');
+    // (No baked sign/barrel — tile-snapped chairs/tables cover the terrace.)
+  } else if (type === 'TRAINING_ACADEMY') {
+    const bw = 30, bh = 15, wh = 26, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#a32424', '#7f1d1d', '#b91c1c');
+    // Pagoda: two stacked slabs = two iso diamonds, always on-grid
+    drawIsoSlab(ctx, cx, yTop, bw + 9, bh + 5, 6, '#334155', '#111c30', '#1e293b');
+    drawIsoSlab(ctx, cx, yTop - 12, bw + 2, bh, 5, '#3b4c66', '#16202f', '#273549');
+    apexY = yTop - 20;
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(cx - 6, apexY - 2, 12, 3);
+    drawIsoWindow(ctx, cx, baseY, bw, bh, wh, 'L', 0.28, 0.52, 11, 18, '#fef3c7', '#ffffff');
+    drawIsoDoor(ctx, cx, baseY, bw, bh, wh, 'R', 0.6, 0.9, 18, '#2b0d0d', '#facc15');
+    // (No baked dummy/rack — tile-snapped dummy decor covers the yard.)
   } else if (type === 'TRADING_POST') {
-    // Open Bazaar with Red & White Striped Awning
-    ctx.fillStyle = '#d97706';
-    ctx.fillRect(cx - 30, groundY - 32, 60, 26);
-
-    // Striped Awning
-    for (let i = 0; i < 7; i++) {
-      ctx.fillStyle = (i % 2 === 0) ? '#ef4444' : '#ffffff';
+    const bw = 30, bh = 15, wh = 16, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#c47a1a', '#8a5410', '#d97706');
+    // Striped awning: diamond slab with alternating iso strips
+    const aw = bw + 9, ah = bh + 5;
+    drawIsoSlab(ctx, cx, yTop, aw, ah, 6, '#ffffff', '#991b1b', '#7f1d1d');
+    // Paint red/white bands across the top diamond (clipped)
+    ctx.save();
+    isoPath(ctx, cx, yTop, aw, ah);
+    ctx.clip();
+    for (let i = -4; i < 5; i++) {
+      ctx.fillStyle = i % 2 === 0 ? '#ef4444' : '#ffffff';
+      const x0 = cx + i * 10;
       ctx.beginPath();
-      ctx.moveTo(cx - 35 + i * 10, groundY - 50);
-      ctx.lineTo(cx - 25 + i * 10, groundY - 50);
-      ctx.lineTo(cx - 27 + i * 10, groundY - 32);
-      ctx.lineTo(cx - 37 + i * 10, groundY - 32);
+      ctx.moveTo(x0, yTop - ah - 2);
+      ctx.lineTo(x0 + 5, yTop - ah - 2);
+      ctx.lineTo(x0 + 5 - 14, yTop + ah + 2);
+      ctx.lineTo(x0 - 14, yTop + ah + 2);
       ctx.closePath();
       ctx.fill();
     }
-
-    // Wooden sales counter
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx - 26, groundY - 22, 52, 12);
-
-    // Crates and gold pouches on counter
-    ctx.fillStyle = '#eab308';
-    ctx.fillRect(cx - 16, groundY - 26, 6, 6); // Gold sack
-    ctx.fillStyle = '#0284c7';
-    ctx.fillRect(cx - 6, groundY - 26, 6, 6); // Gem crate
-    ctx.fillStyle = '#b45309';
-    ctx.fillRect(cx + 6, groundY - 28, 10, 8); // Wooden chest
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    isoPath(ctx, cx, yTop, aw, ah);
+    ctx.stroke();
+    apexY = yTop - 10;
+    // Stall counter as a low iso box in front + goods riding its top.
+    // (Counter front faces get the wood tone; goods are tiny top quads.)
+    drawIsoBox(ctx, cx, baseY + bh - 2, 22, 11, 8, '#8a5f30', '#5b3a1e', '#78350f');
+    fillQuad(ctx, faceQuad(cx, baseY + bh - 2, 22, 11, 8, 'L', 0.15, 0.32, 8, 11), '#eab308');
+    fillQuad(ctx, faceQuad(cx, baseY + bh - 2, 22, 11, 8, 'R', 0.4, 0.57, 8, 11), '#0284c7');
+    fillQuad(ctx, faceQuad(cx, baseY + bh - 2, 22, 11, 8, 'R', 0.62, 0.85, 8, 12), '#b45309');
   } else {
-    // CLINIC / INFIRMARY
-    ctx.fillStyle = '#f8fafc'; // Clean white clinic walls
-    ctx.fillRect(cx - 30, groundY - 44, 60, 38);
-
-    // Teal roof
-    ctx.fillStyle = '#0f766e';
-    ctx.beginPath();
-    ctx.moveTo(cx - 36, groundY - 44);
-    ctx.lineTo(cx, groundY - 66);
-    ctx.lineTo(cx + 36, groundY - 44);
-    ctx.closePath();
-    ctx.fill();
-
-    // Distinct Red Cross Emblem on front
-    ctx.fillStyle = '#ef4444';
-    ctx.fillRect(cx - 2, groundY - 36, 4, 14);
-    ctx.fillRect(cx - 7, groundY - 31, 14, 4);
-
-    // Warm clinic door
-    ctx.fillStyle = '#3b82f6';
-    ctx.fillRect(cx - 8, groundY - 20, 16, 18);
-    ctx.fillStyle = '#fde047';
-    ctx.fillRect(cx - 6, groundY - 12, 3, 3); // brass knob
+    // CLINIC: white iso ward + teal slab roof, cross on both faces
+    const bw = 30, bh = 15, wh = 26, baseY = groundY + 2;
+    const yTop = baseY - wh;
+    drawIsoBox(ctx, cx, baseY, bw, bh, wh, '#eef2f7', '#c3cedd', '#f8fafc');
+    drawIsoSlab(ctx, cx, yTop, bw + 8, bh + 4, 7, '#14a698', '#0b4f4a', '#0f766e');
+    apexY = yTop - 12;
+    drawIsoCross(ctx, cx, baseY, bw, bh, wh, 'L', 0.43, 9, 9);
+    drawIsoCross(ctx, cx, baseY, bw, bh, wh, 'R', 0.43, 9, 9);
+    drawIsoDoor(ctx, cx, baseY, bw, bh, wh, 'R', 0.62, 0.9, 18, '#1d4ed8', '#fde047');
   }
 
-  // Golden Level Star Badges atop building
+  // Level pips float above the roof apex so they never clip the gable
   if (level > 1) {
-    ctx.fillStyle = '#eab308';
-    for (let s = 0; s < Math.min(level, 5); s++) {
-      const sx = cx - (Math.min(level, 5) * 6) + s * 12 + 6;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    const n = Math.min(level, 5);
+    for (let s = 0; s < n; s++) {
+      const sx = cx - (n * 6) + s * 12 + 3;
       ctx.beginPath();
-      ctx.arc(sx, groundY - 82, 3, 0, Math.PI * 2);
+      ctx.arc(sx, apexY - 6, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#eab308';
+    for (let s = 0; s < n; s++) {
+      const sx = cx - (n * 6) + s * 12 + 3;
+      ctx.beginPath();
+      ctx.arc(sx, apexY - 7, 3, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -860,333 +837,10 @@ export function createBuildingTexture(type: BuildingType, level: number): Textur
   return Texture.from(canvas);
 }
 
-// --------------------------------------------------------------------------
-// 5. TAVERN FURNITURE (small crisp pixel-art decor, ~20x24)
-// --------------------------------------------------------------------------
+// Yard furniture painters (chair/table/bed/anvil/vat/dummy) moved to
+// src/game/objects/* — re-exported at the top of this file for compat.
 
-/** Wooden tavern chair: backrest slats, plank seat, four legs. */
-export function createChairTexture(): Texture {
-  const w = 20;
-  const h = 24;
-  const canvas = createPixelCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(10, 21, 7, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Backrest posts
-  ctx.fillStyle = '#5b3a1e';
-  ctx.fillRect(3, 2, 3, 14);
-  ctx.fillRect(14, 2, 3, 14);
-  // Post highlights
-  ctx.fillStyle = '#8a5f30';
-  ctx.fillRect(3, 2, 1, 14);
-  ctx.fillRect(14, 2, 1, 14);
-  // Backrest slats
-  ctx.fillStyle = '#78350f';
-  ctx.fillRect(3, 4, 14, 3);
-  ctx.fillRect(3, 9, 14, 3);
-  ctx.fillStyle = '#a16207';
-  ctx.fillRect(3, 4, 14, 1);
-  ctx.fillRect(3, 9, 14, 1);
-
-  // Plank seat
-  ctx.fillStyle = '#92400e';
-  ctx.fillRect(2, 15, 16, 4);
-  ctx.fillStyle = '#b45309';
-  ctx.fillRect(2, 15, 16, 1);
-  // Plank seams
-  ctx.fillStyle = '#451a03';
-  ctx.fillRect(7, 15, 1, 4);
-  ctx.fillRect(12, 15, 1, 4);
-
-  // Legs
-  ctx.fillStyle = '#3a2412';
-  ctx.fillRect(3, 19, 2, 3);
-  ctx.fillRect(15, 19, 2, 3);
-
-  return Texture.from(canvas);
-}
-
-/** Round wooden tavern table with ale mugs on top. */
-export function createTableTexture(): Texture {
-  const w = 24;
-  const h = 24;
-  const canvas = createPixelCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(12, 21, 9, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Table leg / pedestal
-  ctx.fillStyle = '#3a2412';
-  ctx.fillRect(10, 15, 4, 6);
-  ctx.fillStyle = '#5b3a1e';
-  ctx.fillRect(10, 15, 1, 6);
-
-  // Round tabletop (pixel ellipse)
-  ctx.fillStyle = '#78350f';
-  ctx.beginPath();
-  ctx.ellipse(12, 12, 10, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Tabletop highlight (worn wood sheen)
-  ctx.fillStyle = '#a16207';
-  ctx.beginPath();
-  ctx.ellipse(12, 11, 7, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Rim edge
-  ctx.fillStyle = '#451a03';
-  ctx.fillRect(3, 12, 2, 2);
-  ctx.fillRect(19, 12, 2, 2);
-
-  // Ale mugs on top
-  ctx.fillStyle = '#92400e';
-  ctx.fillRect(7, 5, 3, 4);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(7, 4, 3, 1); // foam
-  ctx.fillStyle = '#92400e';
-  ctx.fillRect(14, 6, 3, 4);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(14, 5, 3, 1); // foam
-
-  return Texture.from(canvas);
-}
-
-// --------------------------------------------------------------------------
-// 6. CLINIC FURNITURE (small crisp pixel-art decor, ~24x20)
-// --------------------------------------------------------------------------
-
-/** Clinic cot: metal frame, white sheet, teal blanket, pillow. */
-export function createBedTexture(): Texture {
-  const w = 24;
-  const h = 20;
-  const canvas = createPixelCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(12, 17, 10, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Bed legs
-  ctx.fillStyle = '#374151';
-  ctx.fillRect(2, 14, 2, 3);
-  ctx.fillRect(20, 14, 2, 3);
-
-  // Metal frame
-  ctx.fillStyle = '#4b5563';
-  ctx.fillRect(1, 8, 22, 8);
-  // Headboard / footboard posts
-  ctx.fillStyle = '#374151';
-  ctx.fillRect(1, 4, 2, 12);
-  ctx.fillRect(21, 4, 2, 12);
-  // Post highlights
-  ctx.fillStyle = '#6b7280';
-  ctx.fillRect(1, 4, 1, 12);
-  ctx.fillRect(21, 4, 1, 12);
-
-  // White sheet / mattress
-  ctx.fillStyle = '#f8fafc';
-  ctx.fillRect(3, 9, 18, 5);
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(3, 12, 18, 2);
-
-  // Teal blanket (foot half)
-  ctx.fillStyle = '#0f766e';
-  ctx.fillRect(12, 9, 9, 5);
-  ctx.fillStyle = '#14b8a6';
-  ctx.fillRect(12, 9, 9, 1);
-
-  // Pillow at head
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(4, 9, 5, 4);
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillRect(4, 12, 5, 1);
-
-  return Texture.from(canvas);
-}
-
-// --------------------------------------------------------------------------
-// 6b. FORGE & CAULDRON SERVICE STATIONS (small crisp pixel-art decor)
-// --------------------------------------------------------------------------
-
-/** Forge anvil on a tree stump: dark iron top, wooden stump base. (~22x20) */
-export function createAnvilTexture(): Texture {
-  const w = 22;
-  const h = 20;
-  const canvas = createPixelCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(11, 17, 8, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Tree stump base
-  ctx.fillStyle = '#5b3a1e';
-  ctx.fillRect(5, 10, 12, 7);
-  // Bark shading
-  ctx.fillStyle = '#3a2412';
-  ctx.fillRect(5, 10, 2, 7);
-  ctx.fillRect(15, 10, 2, 7);
-  // Stump top rings
-  ctx.fillStyle = '#8a5f30';
-  ctx.fillRect(5, 9, 12, 2);
-  ctx.fillStyle = '#a16207';
-  ctx.fillRect(7, 9, 8, 1);
-
-  // Anvil waist
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(8, 6, 6, 3);
-
-  // Anvil top (horn to the right)
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(2, 3, 15, 4);
-  // Horn taper
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(17, 4, 3, 2);
-  ctx.fillRect(20, 4, 1, 1);
-  // Iron highlight
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(2, 3, 15, 1);
-  ctx.fillStyle = '#64748b';
-  ctx.fillRect(8, 6, 6, 1);
-
-  // Ember glow on the face
-  ctx.fillStyle = '#ea580c';
-  ctx.fillRect(4, 5, 2, 1);
-
-  return Texture.from(canvas);
-}
-
-/** Brewing vat: iron-banded wooden tub with bubbling green brew. (~22x22) */
-export function createVatTexture(): Texture {
-  const w = 22;
-  const h = 22;
-  const canvas = createPixelCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(11, 19, 8, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Wooden tub body
-  ctx.fillStyle = '#5b3a1e';
-  ctx.fillRect(4, 8, 14, 11);
-  // Plank shading
-  ctx.fillStyle = '#8a5f30';
-  ctx.fillRect(4, 8, 2, 11);
-  ctx.fillStyle = '#3a2412';
-  ctx.fillRect(9, 8, 1, 11);
-  ctx.fillRect(14, 8, 1, 11);
-  // Iron bands
-  ctx.fillStyle = '#374151';
-  ctx.fillRect(4, 10, 14, 2);
-  ctx.fillRect(4, 15, 14, 2);
-  ctx.fillStyle = '#6b7280';
-  ctx.fillRect(4, 10, 14, 1);
-  ctx.fillStyle = '#6b7280';
-  ctx.fillRect(4, 15, 14, 1);
-
-  // Green brew surface
-  ctx.fillStyle = '#10b981';
-  ctx.beginPath();
-  ctx.ellipse(11, 8, 7, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Brew highlight
-  ctx.fillStyle = '#6ee7b7';
-  ctx.beginPath();
-  ctx.ellipse(9, 7, 3, 1, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Bubbles
-  ctx.fillStyle = '#a7f3d0';
-  ctx.fillRect(8, 4, 2, 2);
-  ctx.fillRect(13, 3, 2, 2);
-  ctx.fillStyle = '#34d399';
-  ctx.fillRect(12, 5, 1, 1);
-
-  return Texture.from(canvas);
-}
-
-/** Straw training dummy on a wooden post: tan/yellow straw body & head. (~20x28) */
-export function createTrainingDummyTexture(): Texture {
-  const w = 20;
-  const h = 28;
-  const canvas = createPixelCanvas(w, h);
-  const ctx = canvas.getContext('2d')!;
-
-  // Ground shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(10, 25, 7, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Wooden pole
-  ctx.fillStyle = '#5b3a1e';
-  ctx.fillRect(9, 8, 3, 17);
-  // Pole highlight
-  ctx.fillStyle = '#8a5f30';
-  ctx.fillRect(9, 8, 1, 17);
-  // Pole base shading
-  ctx.fillStyle = '#3a2412';
-  ctx.fillRect(11, 8, 1, 17);
-
-  // Crossbar arms
-  ctx.fillStyle = '#5b3a1e';
-  ctx.fillRect(3, 12, 14, 2);
-  ctx.fillStyle = '#8a5f30';
-  ctx.fillRect(3, 12, 14, 1);
-
-  // Straw body (bound bundle)
-  ctx.fillStyle = '#d9a441';
-  ctx.fillRect(6, 14, 8, 8);
-  // Straw shading (darker sides)
-  ctx.fillStyle = '#a16207';
-  ctx.fillRect(6, 14, 2, 8);
-  ctx.fillRect(12, 14, 2, 8);
-  // Straw highlight streaks
-  ctx.fillStyle = '#fde047';
-  ctx.fillRect(8, 14, 1, 8);
-  ctx.fillRect(11, 14, 1, 8);
-  // Straw texture ticks
-  ctx.fillStyle = '#b45309';
-  ctx.fillRect(8, 17, 4, 1);
-  ctx.fillRect(9, 20, 3, 1);
-
-  // Rope ties binding the straw
-  ctx.fillStyle = '#78350f';
-  ctx.fillRect(6, 15, 8, 1);
-  ctx.fillRect(6, 20, 8, 1);
-
-  // Straw head
-  ctx.fillStyle = '#e8b64c';
-  ctx.fillRect(7, 4, 6, 5);
-  // Head shading
-  ctx.fillStyle = '#a16207';
-  ctx.fillRect(7, 4, 1, 5);
-  // Head highlight
-  ctx.fillStyle = '#fef08a';
-  ctx.fillRect(9, 4, 2, 5);
-  // Straw ticks on head
-  ctx.fillStyle = '#b45309';
-  ctx.fillRect(8, 6, 4, 1);
-
-  // Rope headband
-  ctx.fillStyle = '#78350f';
-  ctx.fillRect(7, 7, 6, 1);
-
-  return Texture.from(canvas);
-}
+// (Bed/anvil/vat/dummy painters also moved to src/game/objects/*.)
 
 // --------------------------------------------------------------------------
 // 7. SKILL VFX & VISUAL EFFECTS
