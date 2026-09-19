@@ -4,7 +4,7 @@ import {
   Package, Trophy, Eye, ArrowUpCircle, Compass 
 } from 'lucide-react';
 import { Hunter } from '../types';
-import { partyColor } from '../game/simulation';
+import { partyColor, epicEffectDescription } from '../game/simulation';
 
 interface HeroInspectorProps {
   hunter: Hunter;
@@ -254,16 +254,19 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
         {/* Equipment Loadout */}
         <div>
           <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-            <Shield className="w-3.5 h-3.5 text-blue-400" /> Equipment (Auto-Forged)
+            <Shield className="w-3.5 h-3.5 text-blue-400" /> Equipment (Auto-Forged & Looted)
           </h3>
           <div className="space-y-1.5">
             {/* Weapon */}
-            <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700/60 flex items-center justify-between">
+            <div className={`p-2 rounded-lg bg-slate-800/80 border ${(hunter.weapon.rarity ?? 'Common') === 'Epic' ? 'border-fuchsia-500/60' : (hunter.weapon.rarity === 'Rare' ? 'border-blue-500/50' : (hunter.weapon.rarity === 'Uncommon' ? 'border-emerald-500/50' : 'border-slate-700/60'))} flex items-center justify-between`}>
               <div className="flex items-center gap-2">
                 <span className="text-sm">🗡️</span>
                 <div>
-                  <div className="font-bold text-slate-200">{hunter.weapon.name}</div>
+                  <div className="font-bold text-slate-200">{hunter.weapon.rarity && hunter.weapon.rarity !== 'Common' ? `${hunter.weapon.rarity} ` : ''}{hunter.weapon.name}</div>
                   <div className="text-[10px] text-amber-400 font-mono">+ {hunter.weapon.atkBonus} ATK</div>
+                  {hunter.weapon.effectId && (
+                    <div className="text-[10px] text-fuchsia-300 font-mono">✨ {epicEffectDescription(hunter.weapon.effectId, hunter.weapon.effectValue ?? 0)}</div>
+                  )}
                 </div>
               </div>
               <span className="px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 text-[10px] font-mono font-bold">
@@ -272,12 +275,15 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
             </div>
 
             {/* Armor */}
-            <div className="p-2 rounded-lg bg-slate-800/80 border border-slate-700/60 flex items-center justify-between">
+            <div className={`p-2 rounded-lg bg-slate-800/80 border ${(hunter.armor.rarity ?? 'Common') === 'Epic' ? 'border-fuchsia-500/60' : (hunter.armor.rarity === 'Rare' ? 'border-blue-500/50' : (hunter.armor.rarity === 'Uncommon' ? 'border-emerald-500/50' : 'border-slate-700/60'))} flex items-center justify-between`}>
               <div className="flex items-center gap-2">
                 <span className="text-sm">🛡️</span>
                 <div>
-                  <div className="font-bold text-slate-200">{hunter.armor.name}</div>
+                  <div className="font-bold text-slate-200">{hunter.armor.rarity && hunter.armor.rarity !== 'Common' ? `${hunter.armor.rarity} ` : ''}{hunter.armor.name}</div>
                   <div className="text-[10px] text-cyan-400 font-mono">+ {hunter.armor.defBonus} DEF / +{hunter.armor.hpBonus} HP</div>
+                  {hunter.armor.effectId && (
+                    <div className="text-[10px] text-fuchsia-300 font-mono">✨ {epicEffectDescription(hunter.armor.effectId, hunter.armor.effectValue ?? 0)}</div>
+                  )}
                 </div>
               </div>
               <span className="px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 text-[10px] font-mono font-bold">

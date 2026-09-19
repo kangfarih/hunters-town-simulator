@@ -1,7 +1,7 @@
-import { 
-  Hunter, Monster, Building, FloatingText, SkillVFX, GameLog, 
+import {
+  Hunter, Monster, Building, FloatingText, SkillVFX, GameLog,
   CharacterClass, ItemDrop, Equipment, Skill,
-  MaterialStock, MaterialType
+  MaterialStock, MaterialType, EquipmentRarity, EquipmentEffectId
 } from '../types';
 import { gridDistance, getIsometricFacing } from './isometric';
 import { findPath, PathPoint, reserveAt } from './pathfinding';
@@ -342,6 +342,63 @@ export function baseStatsFor(charClass: CharacterClass): {
     armorName: 'Novice Leather Coat',
     accessoryName: 'Copper Ring',
   };
+}
+
+// --------------------------------------------------------------------------
+// Rarity loot: Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6 on tier base.
+// Tier base (shop equivalent): weapon 5+(t-1)*8; armor DEF 3+(t-1)*4, HP 20+(t-1)*15.
+// Uncommon/Rare are stats-only; only Epics carry effectId.
+// --------------------------------------------------------------------------
+
+export const RARITY_STAT_MULT: Record<EquipmentRarity, number> = {
+  Common: 1.0,
+  Uncommon: 1.15,
+  Rare: 1.35,
+  Epic: 1.6,
+};
+
+export const GEAR_SELL_MULT: Record<EquipmentRarity, number> = {
+  Common: 1.0,
+  Uncommon: 1.5,
+  Rare: 2.5,
+  Epic: 5.0,
+};
+
+export function gearSellPrice(tier: number, rarity: EquipmentRarity): number {
+  return Math.round(tier * 40 * (GEAR_SELL_MULT[rarity] ?? 1));
+}
+
+interface EpicDef {
+  name: string;
+  slot: 'weapon' | 'armor';
+  reqClass?: CharacterClass;
+  effectId: EquipmentEffectId;
+  effectValue: number;
+}
+
+// Boss-only Tier 5 epics. Weapons are class-locked, armors are open.
+export const EPIC_DEFS: EpicDef[] = [
+  { name: 'Kingsbane Reaver', slot: 'weapon', reqClass: 'Berserker', effectId: 'execution', effectValue: 0.6 },
+  { name: 'Cometfang Longbow', slot: 'weapon', reqClass: 'Ranger', effectId: 'deadeye', effectValue: 0.12 },
+  { name: 'Solar Cataclysm Staff', slot: 'weapon', reqClass: 'Sorcerer', effectId: 'meteorfall', effectValue: 0.35 },
+  { name: 'Dawnbreaker Gavel', slot: 'weapon', reqClass: 'Paladin', effectId: 'bossbane', effectValue: 0.5 },
+  { name: 'Bloodlord Carapace', slot: 'armor', effectId: 'lifesteal', effectValue: 0.10 },
+  { name: 'Windstalker Shroud', slot: 'armor', effectId: 'swiftwind', effectValue: 0.012 },
+  { name: 'Astral Veil Robe', slot: 'armor', effectId: 'focus', effectValue: 0.20 },
+  { name: 'Aegis of the Martyr', slot: 'armor', effectId: 'martyr', effectValue: 0.25 },
+];
+
+export function epicEffectDescription(effectId: EquipmentEffectId, value: number): string {
+  switch (effectId) {
+    case 'execution': return `Execute: +${Math.round(value * 100)}% damage vs targets below 30% HP`;
+    case 'deadeye': return `Deadeye: +${Math.round(value * 100)}% crit, crits hit x2.1`;
+    case 'meteorfall': return `Meteorfall: +${Math.round(value * 100)}% skill damage`;
+    case 'bossbane': return `Bossbane: +${Math.round(value * 100)}% damage vs bosses`;
+    case 'lifesteal': return `Lifesteal: heal ${Math.round(value * 100)}% of damage dealt`;
+    case 'swiftwind': return `Swiftwind: faster attacks`;
+    case 'focus': return `Focus: skills recharge ${Math.round(value * 100)}% faster`;
+    case 'martyr': return `Martyr: reflect ${Math.round(value * 100)}% damage, calmer under fire`;
+  }
 }
 
 export class GameSimulation {
@@ -803,7 +860,8 @@ export class GameSimulation {
         type: 'weapon',
         atkBonus: 5,
         defBonus: 0,
-        hpBonus: 0
+        hpBonus: 0,
+        rarity: 'Common'
       },
       armor: {
         id: `arm-${charClass}`,
@@ -812,7 +870,8 @@ export class GameSimulation {
         type: 'armor',
         atkBonus: 0,
         defBonus: 3,
-        hpBonus: 20
+        hpBonus: 20,
+        rarity: 'Common'
       },
       accessory: {
         id: 'acc-novice',
@@ -821,7 +880,8 @@ export class GameSimulation {
         type: 'accessory',
         atkBonus: 2,
         defBonus: 1,
-        hpBonus: 10
+        hpBonus: 10,
+        rarity: 'Common'
       },
       inventory: [],
       maxInventorySlots: 12,
@@ -957,7 +1017,8 @@ export class GameSimulation {
         type: 'weapon',
         atkBonus: 5,
         defBonus: 0,
-        hpBonus: 0
+        hpBonus: 0,
+        rarity: 'Common'
       };
       h.armor = {
         id: `arm-${h.charClass}`,
@@ -966,7 +1027,8 @@ export class GameSimulation {
         type: 'armor',
         atkBonus: 0,
         defBonus: 3,
-        hpBonus: 20
+        hpBonus: 20,
+        rarity: 'Common'
       };
       h.accessory = {
         id: 'acc-novice',
@@ -975,7 +1037,8 @@ export class GameSimulation {
         type: 'accessory',
         atkBonus: 2,
         defBonus: 1,
-        hpBonus: 10
+        hpBonus: 10,
+        rarity: 'Common'
       };
       h.isAttacking = false;
       h.attackAnimTimer = 0;
@@ -1729,6 +1792,32 @@ export class GameSimulation {
     return hunter.maxHp + hunter.armor.hpBonus + hunter.accessory.hpBonus;
   }
 
+  /** Epic effect value equipped (weapon or armor), else 0. */
+  private equippedEffect(hunter: Hunter, effectId: EquipmentEffectId): number {
+    for (const eq of [hunter.weapon, hunter.armor, hunter.accessory]) {
+      if (eq && eq.effectId === effectId && typeof eq.effectValue === 'number' && Number.isFinite(eq.effectValue)) {
+        return eq.effectValue;
+      }
+    }
+    return 0;
+  }
+
+  /** Effective crit rate after Deadeye (Cometfang). */
+  public effectiveCritRate(hunter: Hunter): number {
+    return hunter.critRate + this.equippedEffect(hunter, 'deadeye');
+  }
+
+  /** Effective attack speed after Swiftwind (Windstalker). Movement uses base speed. */
+  public effectiveSpeed(hunter: Hunter): number {
+    return hunter.speed + this.equippedEffect(hunter, 'swiftwind');
+  }
+
+  /** Effective skill cooldown after Focus (Astral Veil). */
+  public effectiveCooldownMs(hunter: Hunter, skill: Skill): number {
+    const focus = this.equippedEffect(hunter, 'focus');
+    return focus > 0 ? skill.cooldownMs * (1 - Math.min(0.5, focus)) : skill.cooldownMs;
+  }
+
   /**
    * Danger assessment: true if the monster would mulch the hunter
    * (dead in under ~dangerHits hits, lower = braver) or vastly out-levels
@@ -1764,8 +1853,8 @@ export class GameSimulation {
     hunter.stateTimer -= dt;
     if (hunter.stateTimer > 0) return;
 
-    // Reset swing timer
-    hunter.stateTimer = 1.0 / (1 + hunter.speed * 10);
+    // Reset swing timer (Swiftwind speeds up attacks, not movement)
+    hunter.stateTimer = 1.0 / (1 + this.effectiveSpeed(hunter) * 10);
     hunter.isAttacking = true;
     hunter.attackAnimTimer = 0.35;
 
@@ -1816,21 +1905,27 @@ export class GameSimulation {
 
     // Check available skills for auto-cast (round-robin: oldest ready first
     // so 2nd/3rd skills actually get casts instead of skills[0] hogging).
+    // Focus (Astral Veil) shortens every cooldown.
     const now = Date.now();
     let readySkill: Skill | null = null;
     for (const s of hunter.skills) {
-      if (now - s.lastUsedMs >= s.cooldownMs && (!readySkill || s.lastUsedMs < readySkill.lastUsedMs)) {
+      if (now - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s) && (!readySkill || s.lastUsedMs < readySkill.lastUsedMs)) {
         readySkill = s;
       }
     }
 
-    let isCrit = Math.random() < hunter.critRate;
-    let damage = this.effectiveAtk(hunter) - (monster.def * 0.4);
+    const deadeye = this.equippedEffect(hunter, 'deadeye');
+    let isCrit = Math.random() < this.effectiveCritRate(hunter);
+    const baseDamage = this.effectiveAtk(hunter) - (monster.def * 0.4);
+    let damage = baseDamage;
 
     if (readySkill) {
       // Cast animated skill!
       readySkill.lastUsedMs = now;
-      damage *= readySkill.damageMultiplier;
+      damage = baseDamage * readySkill.damageMultiplier;
+      // Meteorfall (Solar Cataclysm): +35% on the skill portion only.
+      const meteorfall = this.equippedEffect(hunter, 'meteorfall');
+      if (meteorfall > 0) damage = baseDamage + (damage - baseDamage) * (1 + meteorfall);
 
       // Usage-based mastery: flat + CD bonus (longer CD = more EXP).
       // Gray prey teaches nothing (matches 0 hunter EXP on gray).
@@ -1873,12 +1968,26 @@ export class GameSimulation {
     }
 
     if (isCrit) {
-      damage *= 1.75;
+      damage *= deadeye > 0 ? 2.1 : 1.75;
+    }
+    // Execution (Kingsbane): +60% vs targets below 30% HP. Bossbane: +50% vs boss.
+    const execution = this.equippedEffect(hunter, 'execution');
+    if (execution > 0 && monster.maxHp > 0 && monster.hp / monster.maxHp < 0.3) {
+      damage *= (1 + execution);
+    }
+    const bossbane = this.equippedEffect(hunter, 'bossbane');
+    if (bossbane > 0 && monster.isBoss) {
+      damage *= (1 + bossbane);
     }
     damage = Math.max(5, Math.round(damage));
 
     // Deal damage to monster
     monster.hp -= damage;
+    // Lifesteal (Bloodlord): heal a slice of damage dealt.
+    const lifesteal = this.equippedEffect(hunter, 'lifesteal');
+    if (lifesteal > 0 && damage > 0 && hunter.hp > 0) {
+      hunter.hp = Math.min(this.effectiveMaxHp(hunter), hunter.hp + damage * lifesteal);
+    }
     this.addFloatingText(
       isCrit ? `CRIT! -${damage}` : `-${damage}`,
       monster.gx,
@@ -1894,8 +2003,132 @@ export class GameSimulation {
     }
   }
 
-  private handleMonsterDefeat(hunter: Hunter, monster: Monster) {
-    this.totalMonstersDefeated++;
+  // --------------------------------------------------------------------------
+  // Rarity loot rolls (Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6).
+  // Bosses: 35% epic (smart loot 70% killer class). Normals: Uncommon 6%
+  // (wolf+), Rare 1.5% (ghoul/drake). Gray kills: no gear roll.
+  // --------------------------------------------------------------------------
+
+  private zoneGearTier(zone: 1 | 2 | 3): number {
+    return zone === 1 ? 2 : (zone === 2 ? 3 : 4);
+  }
+
+  private classWeaponNoun(charClass: CharacterClass): string {
+    return charClass === 'Berserker' ? 'Cleaver' : charClass === 'Ranger' ? 'Bow' : charClass === 'Sorcerer' ? 'Staff' : 'Gavel';
+  }
+
+  private classArmorNoun(charClass: CharacterClass): string {
+    return charClass === 'Berserker' ? 'Plate' : charClass === 'Ranger' ? 'Garb' : charClass === 'Sorcerer' ? 'Robe' : 'Aegis';
+  }
+
+  private buildStatGear(tier: number, rarity: EquipmentRarity, slot: 'weapon' | 'armor', forClass: CharacterClass, monster: Monster): ItemDrop {
+    const mult = RARITY_STAT_MULT[rarity] ?? 1;
+    const noun = slot === 'weapon' ? this.classWeaponNoun(forClass) : this.classArmorNoun(forClass);
+    const name = `${rarity} ${this.getEquipmentPrefix(tier)} ${forClass} ${noun}`;
+    const equipment: Equipment = slot === 'weapon'
+      ? {
+          id: `eq-wpn-${forClass}-${tier}-${rarity}-${Date.now().toString(36)}`,
+          name, tier, type: 'weapon',
+          atkBonus: Math.round((5 + (tier - 1) * 8) * mult),
+          defBonus: 0, hpBonus: 0, rarity,
+        }
+      : {
+          id: `eq-arm-${forClass}-${tier}-${rarity}-${Date.now().toString(36)}`,
+          name, tier, type: 'armor',
+          atkBonus: 0,
+          defBonus: Math.round((3 + (tier - 1) * 4) * mult),
+          hpBonus: Math.round((20 + (tier - 1) * 15) * mult),
+          rarity,
+        };
+    return {
+      id: `drop-gear-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: equipment.name,
+      count: 1,
+      value: gearSellPrice(tier, rarity),
+      iconType: monster.drops[0]?.iconType ?? 'bone',
+      equipment,
+    };
+  }
+
+  private buildEpicGear(def: EpicDef, monster: Monster): ItemDrop {
+    const tier = 5;
+    const equipment: Equipment = def.slot === 'weapon'
+      ? {
+          id: `eq-epic-${Date.now().toString(36)}`,
+          name: def.name, tier, type: 'weapon',
+          atkBonus: Math.round((5 + (tier - 1) * 8) * RARITY_STAT_MULT.Epic),
+          defBonus: 0, hpBonus: 0, rarity: 'Epic',
+          requiredClass: def.reqClass, effectId: def.effectId, effectValue: def.effectValue,
+        }
+      : {
+          id: `eq-epic-${Date.now().toString(36)}`,
+          name: def.name, tier, type: 'armor',
+          atkBonus: 0,
+          defBonus: Math.round((3 + (tier - 1) * 4) * RARITY_STAT_MULT.Epic),
+          hpBonus: Math.round((20 + (tier - 1) * 15) * RARITY_STAT_MULT.Epic),
+          rarity: 'Epic', effectId: def.effectId, effectValue: def.effectValue,
+        };
+    return {
+      id: `drop-epic-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: equipment.name,
+      count: 1,
+      value: gearSellPrice(tier, 'Epic'),
+      iconType: monster.drops[0]?.iconType ?? 'magic_orb',
+      equipment,
+    };
+  }
+
+  private rollEquipmentDrop(monster: Monster, killer: Hunter): ItemDrop | null {
+    // Gray kills: materials/gold only, no gear.
+    if (!monster.isBoss && killer.level - monster.level >= this.agentConfig.grayGap) return null;
+    if (monster.isBoss) {
+      if (Math.random() >= 0.35) return null;
+      // Smart loot: 70% killer-class pool (its weapon + all armors), else any epic.
+      const classPool = EPIC_DEFS.filter(d => !d.reqClass || d.reqClass === killer.charClass);
+      const pool = Math.random() < 0.7 && classPool.length > 0 ? classPool : EPIC_DEFS;
+      const def = pool[Math.floor(Math.random() * pool.length)];
+      return this.buildEpicGear(def, monster);
+    }
+    // Normal monsters: slime/goblin stay materials-only.
+    if (monster.type === 'slime' || monster.type === 'goblin') return null;
+    const canRare = monster.type === 'ghoul' || monster.type === 'drake';
+    let rarity: EquipmentRarity | null = null;
+    if (canRare && Math.random() < 0.015) rarity = 'Rare';
+    else if (Math.random() < 0.06) rarity = 'Uncommon';
+    if (!rarity) return null;
+    const slot = Math.random() < 0.6 ? 'weapon' : 'armor';
+    return this.buildStatGear(this.zoneGearTier(monster.zone), rarity, slot, killer.charClass, monster);
+  }
+
+  private gearScore(eq: Equipment): number {
+    return eq.type === 'weapon' ? eq.atkBonus : eq.defBonus + eq.hpBonus / 10;
+  }
+
+  private equippedGearFor(hunter: Hunter, slot: 'weapon' | 'armor'): Equipment {
+    return slot === 'weapon' ? hunter.weapon : hunter.armor;
+  }
+
+  /** Auto-equip a gear drop if better + class-lock passes. Old piece vendors at half. Returns true when equipped (drop consumed). */
+  private tryAutoEquipGear(hunter: Hunter, drop: ItemDrop): boolean {
+    const eq = drop.equipment;
+    if (!eq || (eq.type !== 'weapon' && eq.type !== 'armor')) return false;
+    if (eq.requiredClass && eq.requiredClass !== hunter.charClass) return false;
+    const slot = eq.type;
+    const current = this.equippedGearFor(hunter, slot);
+    if (this.gearScore(eq) <= this.gearScore(current)) return false;
+    // Vendor the old piece at half its sell value (shop gear counts as Common).
+    const oldValue = Math.floor(gearSellPrice(current.tier, current.rarity ?? 'Common') / 2);
+    if (oldValue > 0) hunter.gold += oldValue;
+    if (slot === 'weapon') hunter.weapon = { ...eq };
+    else hunter.armor = { ...eq };
+    hunter.hp = Math.min(this.effectiveMaxHp(hunter), hunter.hp + Math.max(0, eq.hpBonus - current.hpBonus));
+    const color = eq.rarity === 'Epic' ? '#e879f9' : (eq.rarity === 'Rare' ? '#60a5fa' : '#4ade80');
+    this.addFloatingText(`⚔️ ${hunter.name} equipped ${eq.name}!`, hunter.gx, hunter.gy - 0.5, color, 12);
+    this.addLog('upgrade', `${hunter.name} equipped ${eq.rarity} ${eq.name}${oldValue > 0 ? ` (+${oldValue}g trade-in)` : ''}.`, hunter.name);
+    return true;
+  }
+
+  private handleMonsterDefeat(hunter: Hunter, monster: Monster) {    this.totalMonstersDefeated++;
     hunter.killCount++;
     // Nursery kills don't feed the auto-director: zone-1 spawns only feel
     // half the dynamic swing (zoneDamp 0.5), so counting ~98% forest kills
@@ -1943,6 +2176,16 @@ export class GameSimulation {
       this.addFloatingText(`No EXP — prey too weak (+${goldTotal}g)`, hunter.gx, hunter.gy, '#6b7280', 11);
     }
 
+    // Rarity gear roll (extra drop on top of guaranteed materials; gray = none).
+    const gearDrop = this.rollEquipmentDrop(monster, hunter);
+    if (gearDrop) {
+      dropTotals = [...dropTotals, gearDrop];
+      if (gearDrop.equipment?.rarity === 'Epic') {
+        this.addFloatingText(`💜 EPIC DROP: ${gearDrop.name}!`, monster.gx, monster.gy - 0.5, '#e879f9', 14);
+        this.addLog('boss', `${hunter.name} looted EPIC ${gearDrop.name} from ${monster.name}!`, hunter.name);
+      }
+    }
+
     if (dropTotals.length > 0 || goldTotal > 0 || expTotal > 0) {
       // Recipients: live party members within 6 cells of the kill
       // (including the killer). Solo hunters — or parties with nobody else
@@ -1958,9 +2201,13 @@ export class GameSimulation {
         hunter.gold += goldTotal;
         this.townGold += Math.round(goldTotal * this.townTaxRate()); // Town tax
 
-        // Collect Loot Drop
+        // Collect Loot Drop (gear auto-equips when better; else bagged to sell)
         dropTotals.forEach(drop => {
-          hunter.inventory.push({ ...drop });
+          if (drop.equipment) {
+            if (!this.tryAutoEquipGear(hunter, drop)) hunter.inventory.push({ ...drop });
+          } else {
+            hunter.inventory.push({ ...drop });
+          }
         });
 
         if (expTotal > 0) {
@@ -2009,13 +2256,23 @@ export class GameSimulation {
               if (!m) continue;
               if (gridDistance(m.gx, m.gy, monster.gx, monster.gy) <= 6 &&
                   m.inventory.length < m.maxInventorySlots) {
-                m.inventory.push({ ...drop });
+                if (drop.equipment) {
+                  if (!this.tryAutoEquipGear(m, drop)) m.inventory.push({ ...drop });
+                } else {
+                  m.inventory.push({ ...drop });
+                }
                 placed = true;
                 break;
               }
             }
           }
-          if (!placed) hunter.inventory.push({ ...drop });
+          if (!placed) {
+            if (drop.equipment) {
+              if (!this.tryAutoEquipGear(hunter, drop)) hunter.inventory.push({ ...drop });
+            } else {
+              hunter.inventory.push({ ...drop });
+            }
+          }
         }
       }
     }
@@ -2356,7 +2613,7 @@ export class GameSimulation {
 
           if (totalSaleGold > 0) {
             for (const item of hunter.inventory) {
-              this.materialStock[item.iconType] += item.count;
+              if (!item.equipment) this.materialStock[item.iconType] += item.count;
             }
             hunter.gold += totalSaleGold;
             hunter.inventory = [];
@@ -2383,8 +2640,12 @@ export class GameSimulation {
               hunter.gold -= upgradeCost;
               this.takeMaterials(2);
               hunter.weapon.tier += 1;
-              hunter.weapon.atkBonus += 8;
-              hunter.weapon.name = `${this.getEquipmentPrefix(hunter.weapon.tier)} ${hunter.charClass} Weapon`;
+              // Rarity-aware reforge: loot keeps its multiplier + effect, only the base moves.
+              const wMult = RARITY_STAT_MULT[hunter.weapon.rarity ?? 'Common'] ?? 1;
+              hunter.weapon.atkBonus = Math.round((5 + (hunter.weapon.tier - 1) * 8) * wMult);
+              if ((hunter.weapon.rarity ?? 'Common') === 'Common' || hunter.weapon.name.includes(' Weapon')) {
+                hunter.weapon.name = `${this.getEquipmentPrefix(hunter.weapon.tier)} ${hunter.charClass} Weapon`;
+              }
 
               soundFx.playSlash();
               this.addFloatingText(`🔨 Bought Tier ${hunter.weapon.tier} weapon`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
@@ -2403,9 +2664,12 @@ export class GameSimulation {
               hunter.gold -= upgradeCost;
               this.takeMaterials(2);
               hunter.armor.tier += 1;
-              hunter.armor.defBonus += 4;
-              hunter.armor.hpBonus += 15;
-              hunter.armor.name = `${this.getEquipmentPrefix(hunter.armor.tier)} ${hunter.charClass} Armor`;
+              const aMult = RARITY_STAT_MULT[hunter.armor.rarity ?? 'Common'] ?? 1;
+              hunter.armor.defBonus = Math.round((3 + (hunter.armor.tier - 1) * 4) * aMult);
+              hunter.armor.hpBonus = Math.round((20 + (hunter.armor.tier - 1) * 15) * aMult);
+              if ((hunter.armor.rarity ?? 'Common') === 'Common' || hunter.armor.name.includes(' Armor')) {
+                hunter.armor.name = `${this.getEquipmentPrefix(hunter.armor.tier)} ${hunter.charClass} Armor`;
+              }
 
               soundFx.playSlash();
               this.addFloatingText(`🔨 Bought Tier ${hunter.armor.tier} armor`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
@@ -2684,9 +2948,20 @@ export class GameSimulation {
           monster.attackAnimTimer = 0.35;
           const dmg = Math.max(3, Math.round(monster.atk - this.effectiveDef(hunter) * 0.5));
           hunter.hp -= dmg;
+          // Martyr (Aegis): reflect a slice back + halve the mood damage.
+          const martyr = this.equippedEffect(hunter, 'martyr');
+          if (martyr > 0 && monster.hp > 0) {
+            monster.hp -= Math.max(1, Math.round(dmg * martyr));
+          }
           // Getting mauled ruins the mood (which in turn scales combat stats)
-          hunter.mood = Math.max(0, hunter.mood - (5 + Math.random() * 3));
+          const moodHit = (5 + Math.random() * 3) * (martyr > 0 ? 0.5 : 1);
+          hunter.mood = Math.max(0, hunter.mood - moodHit);
           this.addFloatingText(`-${dmg}`, hunter.gx, hunter.gy, '#f43f5e', 11);
+
+          if (monster.hp <= 0) {
+            this.handleMonsterDefeat(hunter, monster);
+            return;
+          }
 
           if (hunter.hp <= 0) {
             // Hunter knocked down: Emergency rescue to Clinic
@@ -3299,6 +3574,24 @@ export class GameSimulation {
         if (typeof h.deaths !== 'number' || !Number.isFinite(h.deaths)) h.deaths = 0;
         // Drop legacy generic skillPoints (now usage-based per-skill EXP).
         if ('skillPoints' in (h as unknown as Record<string, unknown>)) delete (h as unknown as Record<string, unknown>).skillPoints;
+        // Migrate gear to rarity model (shop gear = Common; bagged gear keeps rolls).
+        for (const slot of ['weapon', 'armor', 'accessory'] as const) {
+          const eq = (h as unknown as Record<string, unknown>)[slot] as Equipment | undefined;
+          if (eq && typeof eq === 'object') {
+            if (typeof eq.rarity !== 'string') eq.rarity = 'Common';
+            if (typeof eq.tier !== 'number' || !Number.isFinite(eq.tier)) eq.tier = 1;
+          }
+        }
+        if (Array.isArray(h.inventory)) {
+          for (const item of h.inventory) {
+            if (item && typeof item === 'object' && item.equipment && typeof item.equipment === 'object') {
+              if (typeof item.equipment.rarity !== 'string') item.equipment.rarity = 'Uncommon';
+              if (typeof item.value !== 'number' || !Number.isFinite(item.value)) {
+                item.value = gearSellPrice(item.equipment.tier ?? 1, item.equipment.rarity);
+              }
+            }
+          }
+        }
         // Clamp pre-existing over-leveled skills (old bug let level exceed
         // maxLevel, e.g. Rank 7/5). Upgrade path is already capped; this
         // migrates old saves on load. Damage is recomputed from the clamped
