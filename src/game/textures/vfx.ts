@@ -24,20 +24,20 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.arc(center, center, 20, -Math.PI * 0.7, Math.PI * 0.1);
     ctx.stroke();
   } else if (type === 'meteor') {
-    // Burning asteroid meteor
-    const grad = ctx.createRadialGradient(center, center, 4, center, center, 24);
-    grad.addColorStop(0, '#fef08a');
-    grad.addColorStop(0.4, '#ea580c');
-    grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(center, center, 24, 0, Math.PI * 2);
-    ctx.fill();
-    // Inner core
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(center, center, 8, 0, Math.PI * 2);
-    ctx.fill();
+    // Strict-square burning rock: dithered 2-4px blocks, white-hot core,
+    // orange mid, dark red rim. No gradients/arcs — particles add the flames.
+    const px: Array<[number, number, number, string]> = [
+      // x, y, size, color (relative to center)
+      [-6, -6, 4, '#7c2d12'], [2, -8, 4, '#7c2d12'], [-10, 0, 4, '#991b1b'],
+      [6, -2, 4, '#ea580c'], [-4, 2, 4, '#ea580c'], [4, 6, 4, '#f97316'],
+      [-8, 6, 3, '#fb923c'], [0, -4, 4, '#facc15'], [-2, 4, 4, '#fef08a'],
+      [2, 0, 4, '#ffffff'], [-12, -2, 2, '#f97316'], [10, 4, 2, '#f97316'],
+      [-2, -12, 2, '#fb923c'], [6, 10, 2, '#fb923c'],
+    ];
+    for (const [ox, oy, s, c] of px) {
+      ctx.fillStyle = c;
+      ctx.fillRect(center + ox, center + oy, s, s);
+    }
   } else if (type === 'whirlwind') {
     // Double cyclone vortex
     ctx.strokeStyle = '#94a3b8';
@@ -155,14 +155,19 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.fillRect(center - 4, 24, 2, 2);
     ctx.fillRect(center + 3, 6, 2, 2);
   } else {
-    // Impact spark burst
-    ctx.fillStyle = '#facc15';
-    for (let a = 0; a < 8; a++) {
-      const angle = (a / 8) * Math.PI * 2;
-      const x = center + Math.cos(angle) * 14;
-      const y = center + Math.sin(angle) * 14;
-      ctx.fillRect(x - 2, y - 2, 4, 4);
+    // Strict-square impact burst: 8 dithered sparks on the diagonals +
+    // hot 2x2 core. Old version used fillRect on a circle — same squares,
+    // now with a quantized fire palette.
+    const spark: Array<[number, number, string]> = [
+      [14, 0, '#fb923c'], [-14, 0, '#fb923c'], [0, 14, '#f97316'], [0, -14, '#f97316'],
+      [10, 10, '#facc15'], [-10, -10, '#facc15'], [10, -10, '#fef08a'], [-10, 10, '#fef08a'],
+    ];
+    for (const [ox, oy, c] of spark) {
+      ctx.fillStyle = c;
+      ctx.fillRect(center + ox - 2, center + oy - 2, 4, 4);
     }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(center - 2, center - 2, 4, 4);
   }
 
   return Texture.from(canvas);

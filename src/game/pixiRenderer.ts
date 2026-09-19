@@ -44,6 +44,7 @@ export class PixiRenderer {
   private zoneContainer: Container = new Container();
   private entitiesContainer: Container = new Container();
   private vfxContainer: Container = new Container();
+  private particleContainer: Container = new Container();
   private overlayContainer: Container = new Container();
 
   // Camera rig (x/y/zoom exposed as accessors below — the shell reads and
@@ -109,6 +110,7 @@ export class PixiRenderer {
       this.worldContainer.addChild(this.zoneContainer);
       this.worldContainer.addChild(this.entitiesContainer);
       this.worldContainer.addChild(this.vfxContainer);
+      this.worldContainer.addChild(this.particleContainer);
       this.worldContainer.addChild(this.overlayContainer);
       app.stage.addChild(this.worldContainer);
 
@@ -190,6 +192,10 @@ export class PixiRenderer {
     // 4. Skill VFX
     this.effects.renderSkillVfx(this.vfxContainer, this.simulation);
 
+    // 4b. Pooled square-pixel fire / smoke / embers (persistent container —
+    // never cleared per frame, the system recycles dead sprites).
+    this.effects.renderParticles(this.particleContainer, this.simulation, dt);
+
     // 5. Floating damage / text
     this.effects.renderFloatingTexts(this.overlayContainer, this.simulation);
 
@@ -226,6 +232,7 @@ export class PixiRenderer {
     this.hunters.clear();
     this.monsters.clear();
     this.buildings.clear();
+    this.effects.clearParticles();
     clearYards(this.yards);
   }
 

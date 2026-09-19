@@ -7,9 +7,23 @@ import { gridToScreen } from '../isometric';
 import type { GameSimulation } from '../simulation';
 import { zoneColor } from '../types';
 import { createSkillVfxTexture } from '../textures/vfx';
+import { PixelParticleSystem } from './pixelParticles';
+
+// Fixed volcanic vents (gx,gy) in the crater (gx>38, gy>38). Slow ambient
+// fire + smoke so the volcano reads as alive even between Meteor casts.
+const VOLCANO_VENTS = [
+  { x: 45, y: 45 }, { x: 49, y: 46 }, { x: 46, y: 50 },
+  { x: 52, y: 49 }, { x: 50, y: 53 }, { x: 44, y: 48 },
+];
 
 export class EffectsLayer {
   private textures: Map<string, Texture> = new Map();
+  private particles = new PixelParticleSystem();
+  private particlesReady = false;
+  private seenBursts = new Set<string>();
+  private fireAcc = new Map<string, number>();
+  private smokeAcc = new Map<string, number>();
+  private sparkAcc = new Map<string, number>();
 
   private texture(type: string): Texture {
     let t = this.textures.get(type);
@@ -54,9 +68,46 @@ export class EffectsLayer {
       g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
 
       if (z.kind === 'burn') {
-        // Flickering ember core.
-        const flicker = 0.6 + 0.4 * Math.abs(Math.sin(z.elapsed * 9 + 1));
-        g.ellipse(p.x, cy, rx * 0.45, ry * 0.45).fill({ color: 0xfacc15, alpha: 0.35 * flicker * fade });
+        // Strict-square ember core: deterministic dithered cluster that
+        // flickers at 12fps steps. No ellipses/gradients.
+        const flick = Math.floor(z.elapsed * 12) % 2 === 0 ? 1 : 0.72;
+        const coreColors = ['#ffffff', '#fef08a', '#facc15', '#fb923c', '#ea580c'];
+        const spreadX = Math.max(8, rx * 0.45);
+        for (let i = 0; i < 12; i++) {
+          // Deterministic pseudo-random offsets (stable per frame index).
+          const hx = Math.sin(i * 12.9898 + Math.floor(z.elapsed * 12) * 0.7) * 0.5;
+          const hy = Math.cos(i * 78.233 + Math.floor(z.elapsed * 12) * 0.5) * 0.35;
+          const sx = p.x + hx * spreadX;
+          const sy = cy - 2 + hy * spreadX * 0.5 - (i % 3) * 2;
+          const s = i % 4 === 0 ? 4 : i % 2 === 0 ? 3 : 2;
+          g.rect(Math.round(sx), Math.round(sy), s, s).fill({
+            color: coreColors[i % coreColors.length],
+            alpha: 0.9 * flick * fade,
+          });
+        }
+        // Meteor shower: a few small fire rocks rain DOWN above random
+        // points inside the radius while the zone lives (mirrors the
+        // arrows rain). Head color cools as it falls; fades on impact.
+        const SHOWER_N = 5;
+        for (let i = 0; i < SHOWER_N; i++) {
+          const u = ((i * 0.61803398875 + 0.13) % 1 + 1) % 1;
+          const ax = p.x + (u * 2 - 1) * rx * 0.7;
+          const fall = ((z.elapsed * 0.9 + i * 0.37) % 1 + 1) % 1;
+          const ay = cy - 64 + fall * 66; // sky -> ground
+          const impactFade = fall > 0.88 ? Math.max(0, (1 - fall) / 0.12) : 1;
+          const alpha = 0.95 * impactFade * fade;
+          if (alpha <= 0.01) continue;
+          const head = fall < 0.4 ? '#7c2d12' : fall < 0.7 ? '#ea580c' : '#facc15';
+          // Trail above the head + hot core.
+          g.rect(Math.round(ax) - 1, Math.round(ay) - 12, 2, 8).fill({ color: 0xea580c, alpha: alpha * 0.7 });
+          g.rect(Math.round(ax) - 2, Math.round(ay) - 2, 4, 4).fill({ color: head, alpha });
+          g.rect(Math.round(ax) - 1, Math.round(ay) - 1, 2, 2).fill({ color: 0xffffff, alpha });
+          if (fall > 0.88) {
+            // Impact flash squares on the ground.
+            g.rect(Math.round(ax) - 4, Math.round(cy), 3, 3).fill({ color: 0xfacc15, alpha: alpha * 0.8 });
+            g.rect(Math.round(ax) + 2, Math.round(cy) - 2, 2, 2).fill({ color: 0xfb923c, alpha: alpha * 0.8 });
+          }
+        }
       } else if (z.kind === 'arrows') {
         // Rain of Arrows: shafts fall straight DOWN above random points
         // inside the radius and fade on ground impact, continuously while
@@ -207,6 +258,257 @@ export class EffectsLayer {
 
       container.addChild(sprite);
     });
+  }
+
+  renderParticles(container: Container, sim: GameSimulation, dt: number): void {
+    if (!this.particlesReady) {
+      this.particles.attach(container);
+      this.particlesReady = true;
+    }
+    if (dt <= 0) return;
+
+    // Prune bookkeeping for dead zones/vfx so maps stay bounded.
+    for (const id of [...this.fireAcc.keys()]) {
+      if (!sim.activeZones.some(z => z.id === id)) {
+        this.fireAcc.delete(id);
+        this.smokeAcc.delete(id);
+        this.sparkAcc.delete(id);
+      }
+    }
+    for (const id of [...this.seenBursts]) {
+      if (!sim.skillVfxs.some(v => v.id === id)) this.seenBursts.delete(id);
+    }
+
+    // 1. Zones: continuous square-particle emitters at each anchor.
+    // Burn = campfire fire/smoke; other kinds get their own palette so
+    // every skill family reads in pixels, not just fire.
+    for (const z of sim.activeZones) {
+      const fade = Math.min(1, Math.max(0, (z.duration - z.elapsed) / 1));
+      if (fade <= 0) continue;
+      const p = gridToScreen(z.x, z.y);
+      const bx = p.x;
+      const by = p.y + 8;
+      if (z.kind === 'burn') {
+        const scale = Math.min(1.6, 0.7 + z.radius * 0.35);
+        if (!this.seenBursts.has(`zone-${z.id}`)) {
+          this.seenBursts.add(`zone-${z.id}`);
+          this.particles.spawnEmberBurst(bx, by, 8, 70 * scale);
+        }
+        const fa = (this.fireAcc.get(z.id) ?? 0) + dt * 30 * scale * (0.35 + 0.65 * fade);
+        const fn = Math.floor(fa);
+        this.fireAcc.set(z.id, fa - fn);
+        for (let i = 0; i < fn; i++) {
+          this.particles.spawnFire(bx, by, { n: 1, spread: 6 * scale, up: 40, life: 0.7 });
+        }
+        const sa = (this.smokeAcc.get(z.id) ?? 0) + dt * 7 * fade;
+        const sn = Math.floor(sa);
+        this.smokeAcc.set(z.id, sa - sn);
+        if (sn > 0) this.particles.spawnSmoke(bx, by - 2, sn, 7 * scale);
+        continue;
+      }
+      // --- Non-fire zones: rate-limited spark emitters, random offsets. ---
+      const rxPx = Math.max(10, z.radius * 32 * 0.6);
+      const acc = (this.sparkAcc.get(z.id) ?? 0);
+      const scatter = () => bx + (Math.random() - 0.5) * 2 * rxPx;
+      if (z.kind === 'storm') {
+        // Cyclone dust: pale squares whipping sideways, no gravity.
+        const na = acc + dt * 16 * fade;
+        const nn = Math.floor(na);
+        this.sparkAcc.set(z.id, na - nn);
+        for (let i = 0; i < nn; i++) {
+          this.particles.spawnSpark(scatter(), by - 6 - Math.random() * 14, {
+            colors: ['#e2e8f0', '#94a3b8', '#38bdf8'],
+            speed: 34, vx: (Math.random() < 0.5 ? -1 : 1) * 26,
+            vy: -6, gravity: 0, life: 0.6, spread: 4,
+          });
+        }
+      } else if (z.kind === 'arrows') {
+        // Arrow impacts: green/white ground pops that fall back down.
+        const na = acc + dt * 12 * fade;
+        const nn = Math.floor(na);
+        this.sparkAcc.set(z.id, na - nn);
+        for (let i = 0; i < nn; i++) {
+          this.particles.spawnSpark(scatter(), by - 2, {
+            colors: ['#d9f99d', '#4ade80', '#f8fafc'],
+            speed: 26, vy: -34, gravity: 160, life: 0.55, spread: 4,
+          });
+        }
+      } else if (z.kind === 'consecration') {
+        // Holy sparks sinking onto the aura, gold/white.
+        const na = acc + dt * 12 * fade;
+        const nn = Math.floor(na);
+        this.sparkAcc.set(z.id, na - nn);
+        for (let i = 0; i < nn; i++) {
+          this.particles.spawnSpark(scatter(), by - 34, {
+            colors: ['#ffffff', '#fef08a', '#facc15'],
+            speed: 8, vy: 44, gravity: 0, life: 0.7, spread: 4,
+          });
+        }
+      } else if (z.kind === 'radiance' || z.kind === 'hymn') {
+        // Healing motes floating up; hymn adds gold notes.
+        const colors = z.kind === 'hymn'
+          ? ['#f8fafc', '#4ade80', '#fbbf24', '#2dd4bf']
+          : ['#f8fafc', '#4ade80', '#d4a017'];
+        const na = acc + dt * 10 * fade;
+        const nn = Math.floor(na);
+        this.sparkAcc.set(z.id, na - nn);
+        for (let i = 0; i < nn; i++) {
+          this.particles.spawnSpark(scatter(), by - 4, {
+            colors, speed: 8, vy: -30, gravity: -14, life: 0.9, spread: 6,
+          });
+        }
+      }
+    }
+
+    // 2. Skill VFX: trails while flying + one burst on arrival.
+    // Meteor keeps its fire trail; every other family gets square sparks
+    // in its own palette so no skill is particles-free.
+    for (const vfx of sim.skillVfxs) {
+      if (vfx.elapsed < 0) continue;
+      const s = gridToScreen(vfx.startX, vfx.startY);
+      const t = gridToScreen(vfx.targetX, vfx.targetY);
+      const burst = (key: string): boolean => {
+        if (this.seenBursts.has(key)) return false;
+        this.seenBursts.add(key);
+        return true;
+      };
+      if (vfx.type === 'meteor') {
+        const progress = Math.min(1, vfx.elapsed / (vfx.duration * 1.0));
+        const te = 1 - Math.pow(1 - progress, 2);
+        const px = s.x + (t.x - s.x) * te;
+        const py = s.y + (t.y - s.y) * te - Math.sin(progress * Math.PI) * 46;
+        const pinned = Math.hypot(t.x - s.x, t.y - s.y) < 2;
+        // Zone-tick meteors pin start==target (short pops): lighter trail.
+        this.particles.spawnFire(px, py, { n: pinned ? 1 : 2, spread: 3, up: 12, life: 0.45, size: 3 });
+        if (Math.random() < 0.35) this.particles.spawnSmoke(px, py, 1, 3);
+        if (progress > 0.72 && burst(vfx.id)) {
+          this.particles.spawnFire(t.x, t.y + 8, { n: 8, spread: 9, up: 55, life: 0.7 });
+          this.particles.spawnEmberBurst(t.x, t.y + 8, 10, 85);
+          this.particles.spawnSmoke(t.x, t.y + 4, 4, 8);
+        }
+      } else if (vfx.type === 'impact') {
+        if (!burst(vfx.id)) continue;
+        this.particles.spawnFire(t.x, t.y - 2, { n: 5, spread: 7, up: 48, life: 0.55 });
+        this.particles.spawnEmberBurst(t.x, t.y - 2, 7, 75);
+        this.particles.spawnSmoke(t.x, t.y - 4, 3, 6);
+      } else if (vfx.type === 'slash') {
+        const progress = Math.min(1, vfx.elapsed / (vfx.duration * 0.7));
+        const te = 1 - Math.pow(1 - progress, 2);
+        const px = s.x + (t.x - s.x) * te;
+        const py = s.y + (t.y - s.y) * te - 8;
+        this.particles.spawnSpark(px, py, {
+          n: 2, colors: ['#f8fafc', '#ef4444', '#fca5a5'],
+          speed: 40, life: 0.4, spread: 3,
+        });
+        if (progress > 0.7 && burst(vfx.id)) {
+          this.particles.spawnSpark(t.x, t.y - 8, {
+            n: 6, colors: ['#f8fafc', '#ef4444'], speed: 70, life: 0.45, spread: 4,
+          });
+        }
+      } else if (vfx.type === 'multishot') {
+        const travel = Math.hypot(t.x - s.x, t.y - s.y);
+        const progress = Math.min(1, vfx.elapsed / (vfx.duration * 0.65));
+        if (travel < 2) {
+          // Zone rain: green sparks pattering onto the ground.
+          this.particles.spawnSpark(t.x, t.y - 12 - progress * 8, {
+            n: 1, colors: ['#d9f99d', '#22c55e', '#f8fafc'],
+            speed: 6, vy: 70, gravity: 0, life: 0.4, spread: 8,
+          });
+        } else {
+          const px = s.x + (t.x - s.x) * progress;
+          const py = s.y + (t.y - s.y) * progress;
+          this.particles.spawnSpark(px, py, {
+            n: 1, colors: ['#d9f99d', '#22c55e'], speed: 14, life: 0.35, spread: 2,
+          });
+          if (progress > 0.8 && burst(vfx.id)) {
+            this.particles.spawnSpark(t.x, t.y - 6, {
+              n: 5, colors: ['#d9f99d', '#22c55e', '#f8fafc'],
+              speed: 55, vy: -20, gravity: 140, life: 0.5, spread: 3,
+            });
+          }
+        }
+      } else if (vfx.type === 'smite') {
+        // Holy pillar: gold sparks sinking down the beam.
+        this.particles.spawnSpark(t.x, t.y - 18, {
+          n: 2, colors: ['#ffffff', '#fef08a', '#facc15'],
+          speed: 10, vy: 52, gravity: 0, life: 0.55, spread: 5,
+        });
+        if (burst(`smite-${vfx.id}`)) {
+          this.particles.spawnSpark(t.x, t.y - 10, {
+            n: 8, colors: ['#ffffff', '#facc15'], speed: 65, life: 0.5, spread: 4,
+          });
+        }
+      } else if (vfx.type === 'heal') {
+        this.particles.spawnSpark(t.x, t.y - 14, {
+          n: 2, colors: ['#f8fafc', '#4ade80', '#d4a017'],
+          speed: 10, vy: -32, gravity: -12, life: 0.8, spread: 5,
+        });
+      } else if (vfx.type === 'holy_burst') {
+        this.particles.spawnSpark(s.x, s.y - 20, {
+          n: 2, colors: ['#ffffff', '#facc15', '#4ade80'],
+          speed: 12, vy: -34, gravity: -12, life: 0.8, spread: 6,
+        });
+        if (burst(vfx.id)) {
+          this.particles.spawnSpark(s.x, s.y - 20, {
+            n: 10, colors: ['#ffffff', '#facc15', '#4ade80'], speed: 70, life: 0.6, spread: 4,
+          });
+        }
+      } else if (vfx.type === 'ballad' || vfx.type === 'encore') {
+        this.particles.spawnSpark(s.x, s.y - 16, {
+          n: 2, colors: ['#fbbf24', '#2dd4bf', '#fef3c7'],
+          speed: 10, vy: -28, gravity: -10, life: 0.85, spread: 6,
+        });
+      } else if (vfx.type === 'levelup') {
+        if (burst(vfx.id)) {
+          this.particles.spawnSpark(s.x, s.y - 26, {
+            n: 12, colors: ['#fef9c3', '#facc15', '#22d3ee'], speed: 75, life: 0.7, spread: 4,
+          });
+        } else {
+          this.particles.spawnSpark(s.x, s.y - 26, {
+            n: 1, colors: ['#fef9c3', '#facc15'], speed: 8, vy: -36, gravity: -10, life: 0.7, spread: 4,
+          });
+        }
+      }
+    }
+
+    // 3. Ambient: volcano vents (slow) + forge fire + tavern chimney smoke.
+    // Kept sparse on purpose — 6 vents * ~3/s is ~18 live fire max.
+    for (let i = 0; i < VOLCANO_VENTS.length; i++) {
+      const v = VOLCANO_VENTS[i];
+      const p = gridToScreen(v.x, v.y);
+      // Stagger vents so they don't pulse in sync.
+      if ((v.x * 7 + v.y * 13 + Math.floor(performance.now() / 120)) % 9 === 0) {
+        this.particles.spawnFire(p.x, p.y + 10, { n: 1, spread: 5, up: 26, life: 0.9, size: 2 });
+      }
+      if ((v.x * 5 + v.y * 11 + Math.floor(performance.now() / 400)) % 11 === 0) {
+        this.particles.spawnSmoke(p.x, p.y + 8, 1, 5);
+      }
+    }
+    for (const b of sim.buildings) {
+      if (b.type === 'BLACKSMITH') {
+        const p = gridToScreen(b.gx, b.gy);
+        if (Math.random() < dt * 14) {
+          this.particles.spawnFire(p.x + 10, p.y - 40, { n: 1, spread: 3, up: 34, life: 0.6, size: 2 });
+        }
+        if (Math.random() < dt * 4) this.particles.spawnSmoke(p.x + 10, p.y - 42, 1, 3);
+      } else if (b.type === 'TAVERN') {
+        const p = gridToScreen(b.gx, b.gy);
+        if (Math.random() < dt * 2.5) this.particles.spawnSmoke(p.x - 8, p.y - 56, 1, 2);
+      }
+    }
+
+    this.particles.update(dt);
+  }
+
+  /** Drop particle pool so a remount rebuilds cleanly. */
+  clearParticles(): void {
+    this.particles.clear();
+    this.particles = new PixelParticleSystem();
+    this.particlesReady = false;
+    this.seenBursts.clear();
+    this.fireAcc.clear();
+    this.smokeAcc.clear();
+    this.sparkAcc.clear();
   }
 
   renderFloatingTexts(container: Container, sim: GameSimulation): void {
