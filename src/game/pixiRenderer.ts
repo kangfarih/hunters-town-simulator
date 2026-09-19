@@ -3,7 +3,7 @@ import {
 } from 'pixi.js';
 import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel, partyColor } from './simulation';
 import { 
-  gridToScreen, screenToGrid, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
+  gridToScreen, screenToGrid, gridDistance, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
 } from './isometric';
 import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from './pathfinding';
 import { 
@@ -59,6 +59,9 @@ export class PixiRenderer {
 
   // Entity Sprite pools/maps to avoid recreating every frame
   private hunterSprites: Map<string, { sprite: Sprite; hpBar: Graphics; nameText: Text }> = new Map();
+  // Berserker whirl state per hunter: spin rotation accumulator + short
+  // burst timer so the hunter keeps whirling briefly after leaving its storm.
+  private hunterWhirl: Map<string, { rotation: number; burst: number; lastZoneId: string | null }> = new Map();
   private monsterSprites: Map<string, { sprite: Sprite; hpBar: Graphics; nameText?: Text }> = new Map();
   private buildingSprites: Map<string, { sprite: Sprite; levelText: Text; badge: Graphics }> = new Map();
 
@@ -163,7 +166,7 @@ export class PixiRenderer {
     }
     const dt = ticker.deltaTime / 60;
     this.simulation.update(dt);
-    this.renderFrame();
+    this.renderFrame(dt);
   };
 
   private initTextures() {
@@ -312,7 +315,7 @@ export class PixiRenderer {
   // RENDER FRAME (Depth Sorted Entities, VFX, UI)
   // --------------------------------------------------------------------------
 
-  private renderFrame() {
+  private renderFrame(dt: number) {
     this.updateCameraFollow();
 
     // 1. Render Buildings
@@ -337,7 +340,7 @@ export class PixiRenderer {
     this.renderZones();
 
     // 2. Render Hunters
-    this.renderHunters();
+    this.renderHunters(dt);
 
     // 3. Render Monsters
     this.renderMonsters();
@@ -773,10 +776,11 @@ export class PixiRenderer {
   }
 
   /**
-   * Skill-zone layer (below sprites): one ground disc per ActiveZone.
-   * Fixed zones sit static with a pulse; auras ride the caster (sim already
-   * re-anchors x/y). Bard hymn gets orbiting notes, storm a spin, burn a
-   * flicker, heals rising motes. Everything fades out over the last 1s.
+   * Skill-zone layer (below sprites): one soft ground disc per ActiveZone.
+   * No border rings — readability comes from the translucent fill plus the
+   * per-kind tick motifs (storm arcs, burn core, volley ticks, cross, motes,
+   * hymn orbit). Fixed zones sit static with a pulse; auras ride the caster
+   * (sim already re-anchors x/y). Everything fades out over the last 1s.
    */
   private renderZones() {
     this.zoneContainer.removeChildren();
@@ -795,10 +799,10 @@ export class PixiRenderer {
       const g = new Graphics();
       const cy = p.y + 10;
 
-      // Ground disc + rim.
-      g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.16 + 0.08 * pulse) * fade });
-      g.ellipse(p.x, cy, rx, ry).stroke({ color, width: 2, alpha: 0.65 * fade });
-      g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).stroke({ color, width: 1, alpha: 0.35 * fade });
+      // Soft ground fill only (no ring strokes): layered translucent discs
+      // give a radial feel; kind-specific motifs below carry the readout.
+      g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.14 + 0.06 * pulse) * fade });
+      g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
 
       if (z.kind === 'storm') {
         // Spinning cyclone arcs.
@@ -847,7 +851,7 @@ export class PixiRenderer {
     }
   }
 
-  private renderHunters() {
+  private renderHunters(dt: number) {
     const activeHunterIds = new Set(this.simulation.hunters.map(h => h.id));
     // Leader ids derived once per frame from runtime parties (not per hunter).
     const leaderIds = new Set([...this.simulation.parties.values()].map(p => p.leaderId));
@@ -859,6 +863,7 @@ export class PixiRenderer {
         this.entitiesContainer.removeChild(data.hpBar);
         this.entitiesContainer.removeChild(data.nameText);
         this.hunterSprites.delete(id);
+        this.hunterWhirl.delete(id);
       }
     }
 
@@ -937,6 +942,56 @@ export class PixiRenderer {
         const dirY = (hunter.facing === 'SE' || hunter.facing === 'SW') ? 0.5 : -0.5;
         hData.sprite.x += dirX * punch;
         hData.sprite.y += dirY * punch;
+      }
+
+      // Whirlwind revamp (visual only): when this hunter's own storm zone is
+      // active, spin the hunter sprite itself while they stand inside/near it.
+      // Facing stays texture-driven (frame lookup above), so rotation is a
+      // pure overlay — always reset to 0 when the whirl ends. The storm disc
+      // + cyclone arcs in renderZones remain as the dust trail underneath.
+      const ownStorms = this.simulation.activeZones.filter(
+        z => z.kind === 'storm' && z.sourceId === hunter.id
+      );
+      const hasStorm = ownStorms.length > 0;
+      const newestStormId = hasStorm ? ownStorms[ownStorms.length - 1].id : null;
+      let whirl = this.hunterWhirl.get(hunter.id);
+      if (!whirl) {
+        whirl = { rotation: 0, burst: 0, lastZoneId: null };
+        this.hunterWhirl.set(hunter.id, whirl);
+      }
+      // Fresh cast (new zone id) grants a ~0.9s spin burst so the whirl reads
+      // even if the caster never steps into the storm (storms pin to target).
+      if (newestStormId && newestStormId !== whirl.lastZoneId) {
+        whirl.burst = 0.9;
+        whirl.lastZoneId = newestStormId;
+      }
+      if (!hasStorm) {
+        whirl.lastZoneId = null;
+      }
+      const insideOwnStorm = hasStorm && ownStorms.some(
+        z => gridDistance(hunter.gx, hunter.gy, z.x, z.y) <= z.radius + 0.75
+      );
+      // While inside, keep the burst topped up so leaving mid-storm still
+      // gets a short tail spin; otherwise let the cast burst decay.
+      if (insideOwnStorm) {
+        whirl.burst = 0.9;
+      } else if (whirl.burst > 0) {
+        whirl.burst = Math.max(0, whirl.burst - dt);
+      }
+      const whirling = hasStorm && (insideOwnStorm || whirl.burst > 0);
+      if (whirling) {
+        whirl.rotation += 11 * dt;
+        hData.sprite.rotation = whirl.rotation;
+        hData.sprite.scale.set(1.12);
+      } else {
+        if (whirl.rotation !== 0) {
+          whirl.rotation = 0;
+          hData.sprite.rotation = 0;
+          hData.sprite.scale.set(1);
+        }
+        if (!hasStorm && whirl.burst <= 0) {
+          this.hunterWhirl.delete(hunter.id);
+        }
       }
 
       // Update HP bar
@@ -1301,6 +1356,7 @@ export class PixiRenderer {
     }
     // Clear pooled sprite maps so a remount rebuilds cleanly.
     this.hunterSprites.clear();
+    this.hunterWhirl.clear();
     this.monsterSprites.clear();
     this.buildingSprites.clear();
     for (const cached of this.tavernDecor.values()) {
