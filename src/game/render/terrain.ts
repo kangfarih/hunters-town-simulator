@@ -134,12 +134,13 @@ export class TerrainLayer {
   }
 
   // Directional palisades: thin wall SEGMENTS, not square blocks.
-  // E-W runs (y==39: town-south + forest/volcano line) travel down-right
-  // (32,16) and show their SW (dark) face; N-S runs (x==39: town-east +
-  // graveyard/volcano line) travel down-left (-32,16) and show SE (lit).
-  // Segments overlap 8px into neighbors for a continuous rampart; open
-  // ends at gates/map edges get a taller gate post cap. Gate cells stay
-  // gaps by construction. Sorted back-to-front.
+  // Orientation follows the run: a wall with an E/W neighbor travels
+  // down-right (32,16) and shows its SW (dark) face; otherwise it travels
+  // down-left (-32,16) and shows SE (lit). Covers interior palisades
+  // (x==19 / x==39 / y==39), the north seal (y==19), and the outer map
+  // rim. Segments overlap 8px into neighbors for a continuous rampart;
+  // open ends at gates/map corners get a taller gate post cap. Gate cells
+  // stay gaps by construction. Sorted back-to-front.
   private buildWalls(container: Container): void {
     const sortedWalls = [...WALL_CELLS].sort((a, b) => (a.x + a.y) - (b.x + b.y));
     const wallSet = new Set(WALL_CELLS.map(c => `${c.x},${c.y}`));
@@ -148,7 +149,7 @@ export class TerrainLayer {
       const p = gridToScreen(cell.x, cell.y);
       const cx = p.x, cy = p.y + 16; // wall base center (diamond center)
       const g = new Graphics();
-      const isEW = cell.y === 39;
+      const isEW = wallSet.has(`${cell.x - 1},${cell.y}`) || wallSet.has(`${cell.x + 1},${cell.y}`);
       // Run direction (unit * HL) + south-pointing half-thickness normal
       const ux = (isEW ? 0.8944 : -0.8944) * HL;
       const uy = 0.4472 * HL;

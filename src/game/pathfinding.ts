@@ -41,6 +41,15 @@ export function isWallCell(cx: number, cy: number): boolean {
   // horizontal arm (cy==39, cx 37..41) stay walkable so hunters can cross
   // between any regions without detouring through the outer gates.
   if (isHubCell(cx, cy)) return false;
+  // Outer map rim: seals the world edge on all four sides so regions
+  // never render open to the void. Solid, no gates — roam bounds and
+  // buildings all sit 2+ cells inside, so no AI route needs the rim.
+  if (cx === 0 || cx === MAP_GRID_WIDTH - 1) return true;
+  if (cy === 0 || cy === MAP_GRID_HEIGHT - 1) return true;
+  // North seal (y==19): caps town / forest / dungeon from the reserved
+  // northwest bands. Solid, no gate — reserves hold no spawns, buildings,
+  // or AI targets, so nothing ever needs to cross.
+  if (cy === 19) return true;
   // West palisade: seals the dungeon strip (gx 0..19, gy 20..59) from
   // town/crypt. The old crypt-side gate cell (19,41) is SEALED solid —
   // entry is teleport-only via the town portal lobby, so the whole run
