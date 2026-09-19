@@ -318,11 +318,13 @@ export function baseStatsFor(charClass: CharacterClass): {
     baseCrit = 0.18;
     speed = 0.04;
   } else if (charClass === 'Paladin') {
-    baseHp = 180;
-    baseAtk = 20;
-    baseDef = 16;
-    baseCrit = 0.08;
-    speed = 0.038;
+    // Tank anchor: biggest HP/DEF pool, weakest crit, slowest feet.
+    // Trades damage for the line-holding tank kit (shield + taunt + DR aura).
+    baseHp = 220;
+    baseAtk = 18;
+    baseDef = 20;
+    baseCrit = 0.05;
+    speed = 0.036;
   } else {
     // Cleric: frail support healer, slightly quick feet
     baseHp = 85;
@@ -945,6 +947,9 @@ export class GameSimulation {
       tonicBoost: 0,
       tonicBoostTimer: 0,
       deaths: 0,
+      // Paladin tank kit starts unshielded
+      shieldHp: 0,
+      shieldTimer: 0,
       animFrame: 0,
       animTick: 0,
       isAttacking: false,
@@ -1007,16 +1012,48 @@ export class GameSimulation {
         expToNext: SKILL_EXP_TO_NEXT
       };
     } else if (charClass === 'Paladin') {
+      // Tank kit: T1 self-shield + damage, T2 big shield + AoE taunt + party
+      // guard, T3 damage + shield refresh + AoE taunt. Longer CDs than DPS
+      // classes so taunt uptime always leaves gaps (bosses stay honest).
+      if (tier === 2) {
+        return {
+          id: `skill-pala-${tier}`,
+          name: 'Radiant Aegis',
+          level: 1,
+          maxLevel: 5,
+          cooldownMs: 6000,
+          lastUsedMs: 0,
+          damageMultiplier: 1.2,
+          effectType: 'smite',
+          description: 'Bulwark of light: big self-shield, taunts nearby beasts, guards the party.',
+          exp: 0,
+          expToNext: SKILL_EXP_TO_NEXT
+        };
+      } else if (tier === 3) {
+        return {
+          id: `skill-pala-${tier}`,
+          name: 'Judgement Pillar',
+          level: 1,
+          maxLevel: 5,
+          cooldownMs: 8000,
+          lastUsedMs: 0,
+          damageMultiplier: 1.7 + tier * 0.35,
+          effectType: 'smite',
+          description: 'Pillar of judgement: heavy damage, refreshes shield, taunts nearby beasts.',
+          exp: 0,
+          expToNext: SKILL_EXP_TO_NEXT
+        };
+      }
       return {
         id: `skill-pala-${tier}`,
-        name: tier === 1 ? 'Holy Smite' : (tier === 2 ? 'Radiant Aegis' : 'Judgement Pillar'),
+        name: 'Holy Smite',
         level: 1,
         maxLevel: 5,
         cooldownMs: 4500,
         lastUsedMs: 0,
         damageMultiplier: 1.7 + tier * 0.35,
         effectType: 'smite',
-        description: 'Calls down divine wrath that damages foes and shields the hunter.',
+        description: 'Divine wrath that damages the foe and raises a self-shield.',
         exp: 0,
         expToNext: SKILL_EXP_TO_NEXT
       };
@@ -1058,6 +1095,8 @@ export class GameSimulation {
       h.tonics = 0;
       h.tonicBoost = 0;
       h.tonicBoostTimer = 0;
+      h.shieldHp = 0;
+      h.shieldTimer = 0;
       h.inventory = [];
       h.skills = [this.createClassSkill(h.charClass, 1)];
       h.killCount = 0;
@@ -1302,6 +1341,8 @@ export class GameSimulation {
       targetHunterId: null,
       attackCooldown: 1.5,
       roamPauseTimer: Math.random() * 2.5,
+      tauntHunterId: null,
+      tauntTimer: 0,
       isBoss,
       animFrame: 0,
       animTick: 0,
@@ -1445,6 +1486,19 @@ export class GameSimulation {
     if (typeof hunter.lfpCooldown !== 'number' || !Number.isFinite(hunter.lfpCooldown)) hunter.lfpCooldown = 0;
     if (hunter.lfpCooldown > 0) hunter.lfpCooldown -= dt;
 
+    // Paladin absorb shield ticks down (transient tank kit)
+    if (typeof hunter.shieldHp !== 'number' || !Number.isFinite(hunter.shieldHp)) hunter.shieldHp = 0;
+    if (typeof hunter.shieldTimer !== 'number' || !Number.isFinite(hunter.shieldTimer)) hunter.shieldTimer = 0;
+    if (hunter.shieldTimer > 0) {
+      hunter.shieldTimer -= dt;
+      if (hunter.shieldTimer <= 0) {
+        hunter.shieldTimer = 0;
+        hunter.shieldHp = 0;
+      }
+    } else if (hunter.shieldHp < 0) {
+      hunter.shieldHp = 0;
+    }
+
     // Field parties are field-only: any town state dissolves membership.
     if (hunter.partyId && (hunter.state === 'RETURNING_TO_TOWN' ||
         hunter.state === 'SELLING_LOOT' || hunter.state === 'UPGRADING_GEAR' ||
@@ -1547,7 +1601,8 @@ export class GameSimulation {
 
       case 'HUNTING': {
         // Check health first - if critical, auto retreat to town clinic!
-        if (hunter.hp < this.effectiveMaxHp(hunter) * this.agentConfig.retreatHpFrac) {
+        // (Paladin tanks hold the line to 15% before bailing.)
+        if (hunter.hp < this.effectiveMaxHp(hunter) * this.retreatHpFracFor(hunter)) {
           this.retreatToTown(hunter, 'low HP');
           break;
         }
@@ -1833,9 +1888,29 @@ export class GameSimulation {
     return (hunter.atk + hunter.weapon.atkBonus + hunter.accessory.atkBonus) * this.moodScale(hunter) * (1 + hunter.moraleBoost + hunter.tonicBoost);
   }
 
-  /** Effective defense after mood scaling. */
+  /** Effective defense after mood scaling + Paladin guard aura. */
   public effectiveDef(hunter: Hunter): number {
-    return (hunter.def + hunter.armor.defBonus + hunter.accessory.defBonus) * this.moodScale(hunter);
+    const base = (hunter.def + hunter.armor.defBonus + hunter.accessory.defBonus) * this.moodScale(hunter);
+    if (hunter.charClass === 'Paladin') return base;
+    // Guard aura: a live Paladin within 4 tiles grants +25% DEF. Same-party
+    // preferred (so the tank guards its own pack); falls back to any nearby
+    // Paladin when parties are off or the hunter is solo.
+    const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
+    const partyIds = party ? new Set(this.partyMembers(hunter).map(m => m.id)) : null;
+    for (const p of this.hunters) {
+      if (p.charClass !== 'Paladin' || p.id === hunter.id || p.hp <= 0) continue;
+      if (p.state !== 'HUNTING' && p.state !== 'FIGHTING') continue;
+      if (partyIds && !partyIds.has(p.id)) continue;
+      if (gridDistance(hunter.gx, hunter.gy, p.gx, p.gy) <= 4) return base * 1.25;
+    }
+    if (!partyIds) {
+      for (const p of this.hunters) {
+        if (p.charClass !== 'Paladin' || p.id === hunter.id || p.hp <= 0) continue;
+        if (p.state !== 'HUNTING' && p.state !== 'FIGHTING') continue;
+        if (gridDistance(hunter.gx, hunter.gy, p.gx, p.gy) <= 4) return base * 1.25;
+      }
+    }
+    return base;
   }
 
   /** Real max HP: base (level growth) + armor + accessory bonuses. Stored maxHp stays base-only. */
@@ -1891,13 +1966,70 @@ export class GameSimulation {
     const mult = 1 + 0.25 * Math.max(0, size - 1);
     const estHit = monster.atk - this.effectiveDef(hunter) * mult * 0.5;
     if (estHit <= 0) return false;
-    const effectiveHp = (hunter.hp + 0.35 * this.effectiveMaxHp(hunter) * hunter.elixirs) * mult;
-    return effectiveHp / estHit < this.agentConfig.dangerHits;
+    // Tank lens: live shield counts as HP, and Paladins hold the line longer
+    // (danger threshold -2 hits, floor 2) so the anchor doesn't bounce off
+    // fights it is built to soak.
+    const shield = typeof hunter.shieldHp === 'number' && Number.isFinite(hunter.shieldHp) ? Math.max(0, hunter.shieldHp) : 0;
+    const effectiveHp = (hunter.hp + shield + 0.35 * this.effectiveMaxHp(hunter) * hunter.elixirs) * mult;
+    const bravery = hunter.charClass === 'Paladin' ? Math.max(2, this.agentConfig.dangerHits - 2) : this.agentConfig.dangerHits;
+    return effectiveHp / estHit < bravery;
+  }
+
+  /** HP fraction that triggers a clinic retreat — Paladins hold to 15%. */
+  private retreatHpFracFor(hunter: Hunter): number {
+    if (hunter.charClass === 'Paladin') return Math.min(this.agentConfig.retreatHpFrac, 0.15);
+    return this.agentConfig.retreatHpFrac;
   }
 
   /** True when the hunter could actually improve in town (gear or training). */
   private canImproveInTown(hunter: Hunter): boolean {
     return this.canAffordForgeUpgrade(hunter) || hunter.skills.some(s => s.level < s.maxLevel && s.exp >= s.expToNext);
+  }
+
+  /**
+   * Paladin tank effect on smite cast: raises an absorb shield and (T2/T3)
+   * taunts nearby beasts onto the Paladin. Shield scales +5% maxHp per
+   * skill rank above 1 so Academy promotions thicken the bulwark.
+   * Taunt radius 6, duration 4s (Aegis) / 5s (Judgement) — always shorter
+   * than the skill CD so bosses can't be perma-locked.
+   */
+  private applyPaladinTankEffect(hunter: Hunter, skill: Skill) {
+    const tierMatch = /-(\d+)\s*$/.exec(typeof skill.id === 'string' ? skill.id : '');
+    const tier = tierMatch ? parseInt(tierMatch[1], 10) : 1;
+    const rankBonus = 0.05 * Math.max(0, (skill.level ?? 1) - 1);
+    const maxHp = this.effectiveMaxHp(hunter);
+    let shieldFrac = 0.30;
+    let shieldSecs = 6;
+    let tauntSecs = 0;
+    if (tier === 2) {
+      shieldFrac = 0.60;
+      shieldSecs = 8;
+      tauntSecs = 4;
+    } else if (tier >= 3) {
+      shieldFrac = 0.45;
+      shieldSecs = 7;
+      tauntSecs = 5;
+    }
+    const shield = Math.round(maxHp * (shieldFrac + rankBonus));
+    hunter.shieldHp = Math.max(hunter.shieldHp ?? 0, shield);
+    hunter.shieldTimer = Math.max(hunter.shieldTimer ?? 0, shieldSecs);
+    this.addFloatingText(`🛡️ Aegis +${shield}`, hunter.gx, hunter.gy - 0.5, '#93c5fd', 12);
+    if (tauntSecs > 0) {
+      let taunted = 0;
+      for (const m of this.monsters) {
+        if (m.hp <= 0) continue;
+        if (gridDistance(hunter.gx, hunter.gy, m.gx, m.gy) > 6) continue;
+        m.tauntHunterId = hunter.id;
+        m.tauntTimer = tauntSecs;
+        m.state = 'COMBAT';
+        m.targetHunterId = hunter.id;
+        taunted++;
+      }
+      if (taunted > 0) {
+        this.addFloatingText(`😡 Taunt! (${taunted})`, hunter.gx, hunter.gy - 1.1, '#f87171', 12);
+        this.addLog('combat', `${hunter.name} taunts ${taunted} beast${taunted > 1 ? 's' : ''} with ${skill.name}!`, hunter.name);
+      }
+    }
   }
 
   private resolveHunterCombat(hunter: Hunter, monster: Monster, dt: number) {
@@ -2011,6 +2143,12 @@ export class GameSimulation {
       else soundFx.playSlash();
 
       this.addFloatingText(`⚡ ${readySkill.name}!`, hunter.gx, hunter.gy - 0.5, '#38bdf8', 11);
+
+      // Paladin tank kit: every smite cast raises the absorb shield; Aegis /
+      // Judgement also taunt nearby beasts onto the Paladin.
+      if (hunter.charClass === 'Paladin' && readySkill.effectType === 'smite') {
+        this.applyPaladinTankEffect(hunter, readySkill);
+      }
     } else {
       // Standard attack
       if (hunter.charClass === 'Ranger') soundFx.playArrow();
@@ -2358,11 +2496,18 @@ export class GameSimulation {
       hunter.level++;
       hunter.expToNext = Math.round(hunter.expToNext * 1.45);
 
-      // Stat boosts on level up
-      hunter.maxHp += 20;
-      hunter.hp = this.effectiveMaxHp(hunter);
-      hunter.atk += 4;
-      hunter.def += 2;
+      // Stat boosts on level up (Paladin tanks scale HP/DEF harder, ATK slower)
+      if (hunter.charClass === 'Paladin') {
+        hunter.maxHp += 30;
+        hunter.hp = this.effectiveMaxHp(hunter);
+        hunter.atk += 2;
+        hunter.def += 3;
+      } else {
+        hunter.maxHp += 20;
+        hunter.hp = this.effectiveMaxHp(hunter);
+        hunter.atk += 4;
+        hunter.def += 2;
+      }
 
       soundFx.playLevelUp();
       this.addFloatingText(`⭐ LEVEL UP! [Lv.${hunter.level}]`, hunter.gx, hunter.gy - 0.8, '#facc15', 15);
@@ -2947,6 +3092,33 @@ export class GameSimulation {
       monster.animTick = 0;
       monster.animFrame = (monster.animFrame + 1) % 2;
     }
+    // Paladin taunt lock ticks down; validated below. Init guards for old saves.
+    if (typeof monster.tauntTimer !== 'number' || !Number.isFinite(monster.tauntTimer)) monster.tauntTimer = 0;
+    if (typeof monster.tauntHunterId !== 'string' && monster.tauntHunterId !== null) monster.tauntHunterId = null;
+    if (monster.tauntTimer > 0) monster.tauntTimer -= dt;
+    if (monster.tauntTimer <= 0) {
+      monster.tauntTimer = 0;
+      monster.tauntHunterId = null;
+    }
+    const taunter = monster.tauntHunterId
+      ? this.hunters.find(h => h.id === monster.tauntHunterId && h.hp > 0 &&
+          (h.state === 'HUNTING' || h.state === 'FIGHTING'))
+      : undefined;
+    if (!taunter) {
+      monster.tauntHunterId = null;
+      if (monster.tauntTimer < 0) monster.tauntTimer = 0;
+    } else if (gridDistance(monster.gx, monster.gy, taunter.gx, taunter.gy) > 9 ||
+        this.zoneOf(taunter.gx, taunter.gy) !== monster.zone &&
+        this.zoneOf(monster.gx, monster.gy) === monster.zone) {
+      // Taunter kited too far or out of the hunting grounds: break the lock.
+      monster.tauntHunterId = null;
+      monster.tauntTimer = 0;
+    }
+    // Taunted monsters stick to the Paladin and skip nearest-prey switching.
+    if (monster.tauntHunterId && taunter) {
+      monster.state = 'COMBAT';
+      monster.targetHunterId = taunter.id;
+    }
     // Check if attacked by hunter or hunter nearby
     if (monster.state === 'IDLE' || monster.state === 'PATROL') {
       // Find nearest hunter
@@ -2978,12 +3150,16 @@ export class GameSimulation {
       if (this.zoneOf(monster.gx, monster.gy) !== monster.zone) {
         monster.state = 'IDLE';
         monster.targetHunterId = null;
+        monster.tauntHunterId = null;
+        monster.tauntTimer = 0;
         return;
       }
       const hunter = this.hunters.find(h => h.id === monster.targetHunterId);
       if (!hunter || hunter.hp <= 0 || hunter.state === 'RETURNING_TO_TOWN') {
         monster.state = 'IDLE';
         monster.targetHunterId = null;
+        monster.tauntHunterId = null;
+        monster.tauntTimer = 0;
         return;
       }
 
@@ -2992,6 +3168,8 @@ export class GameSimulation {
       if (dist > 9) {
         monster.state = 'IDLE';
         monster.targetHunterId = null;
+        monster.tauntHunterId = null;
+        monster.tauntTimer = 0;
         return;
       }
       if (dist > 1.2) {
@@ -3004,14 +3182,23 @@ export class GameSimulation {
           monster.attackCooldown = 1.8;
           monster.attackAnimTimer = 0.35;
           const dmg = Math.max(3, Math.round(monster.atk - this.effectiveDef(hunter) * 0.5));
-          hunter.hp -= dmg;
+          // Paladin absorb shield soaks damage first (tank kit). A raised
+          // shield also steadies morale: mood damage halved while it holds.
+          const hadShield = (hunter.shieldHp ?? 0) > 0;
+          const absorbed = Math.min(hadShield ? hunter.shieldHp : 0, dmg);
+          if (absorbed > 0) {
+            hunter.shieldHp -= absorbed;
+            this.addFloatingText(`🛡️ -${absorbed}`, hunter.gx, hunter.gy - 0.5, '#93c5fd', 11);
+          }
+          hunter.hp -= (dmg - absorbed);
           // Martyr (Aegis): reflect a slice back + halve the mood damage.
           const martyr = this.equippedEffect(hunter, 'martyr');
           if (martyr > 0 && monster.hp > 0) {
             monster.hp -= Math.max(1, Math.round(dmg * martyr));
           }
-          // Getting mauled ruins the mood (which in turn scales combat stats)
-          const moodHit = (5 + Math.random() * 3) * (martyr > 0 ? 0.5 : 1);
+          // Getting mauled ruins the mood (which in turn scales combat stats).
+          // A raised shield + Martyr each halve the blow to morale.
+          const moodHit = (5 + Math.random() * 3) * (martyr > 0 ? 0.5 : 1) * (hadShield ? 0.5 : 1);
           hunter.mood = Math.max(0, hunter.mood - moodHit);
           this.addFloatingText(`-${dmg}`, hunter.gx, hunter.gy, '#f43f5e', 11);
 
@@ -3087,6 +3274,15 @@ export class GameSimulation {
     }
     hunter.hp = 1;
     hunter.deaths++;
+    hunter.shieldHp = 0;
+    hunter.shieldTimer = 0;
+    // A downed tank drops all taunt locks so beasts re-acquire live prey.
+    for (const m of this.monsters) {
+      if (m.tauntHunterId === hunter.id) {
+        m.tauntHunterId = null;
+        m.tauntTimer = 0;
+      }
+    }
     this.totalHunterDeaths++;
     this.windowDeaths++;
     this.evaluateDirector();
@@ -3618,6 +3814,9 @@ export class GameSimulation {
         if (typeof m.animFrame !== 'number' || !Number.isFinite(m.animFrame)) m.animFrame = 0;
         if (typeof m.animTick !== 'number' || !Number.isFinite(m.animTick)) m.animTick = 0;
         if (typeof m.attackAnimTimer !== 'number' || !Number.isFinite(m.attackAnimTimer)) m.attackAnimTimer = 0;
+        // Paladin tank kit is runtime-only: old saves load untaunted.
+        m.tauntHunterId = null;
+        m.tauntTimer = 0;
         const bounds = ZONE_ROAM_BOUNDS[m.zone as 1 | 2 | 3];
         if (bounds) {
           m.gx = Math.min(bounds.maxGx, Math.max(bounds.minGx, num(m.gx, bounds.minGx)));
@@ -3638,6 +3837,11 @@ export class GameSimulation {
         // Plaza LFP muster is transient too: old saves lack the cooldown,
         // and waiting seekers resume as plaza strollers (hub re-evaluates).
         if (typeof h.lfpCooldown !== 'number' || !Number.isFinite(h.lfpCooldown)) h.lfpCooldown = 0;
+        // Paladin absorb shield is transient: old saves load unshielded.
+        if (typeof h.shieldHp !== 'number' || !Number.isFinite(h.shieldHp)) h.shieldHp = 0;
+        else h.shieldHp = 0;
+        if (typeof h.shieldTimer !== 'number' || !Number.isFinite(h.shieldTimer)) h.shieldTimer = 0;
+        else h.shieldTimer = 0;
         if (h.state === 'LOOKING_FOR_PARTY') {
           h.state = 'WANDERING_TOWN';
           h.stateTimer = 1.5;
@@ -3706,7 +3910,7 @@ export class GameSimulation {
                 if (h.charClass === 'Berserker') base = 1.8 + tier * 0.4;
                 else if (h.charClass === 'Ranger') base = 1.6 + tier * 0.35;
                 else if (h.charClass === 'Sorcerer') base = 2.2 + tier * 0.5;
-                else if (h.charClass === 'Paladin') base = 1.7 + tier * 0.35;
+                else if (h.charClass === 'Paladin') base = tier === 2 ? 1.2 : 1.7 + tier * 0.35;
                 else if (h.charClass === 'Cleric') base = 2.0 + tier * 0.4;
               }
               if (base !== null) {

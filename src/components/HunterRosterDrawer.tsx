@@ -118,7 +118,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                     </div>
                     <div className="flex items-center justify-between gap-1 mt-0.5">
                       <span className={`text-[9px] font-black uppercase px-1 rounded border ${rowStyle.badge}`}>
-                        {hunter.charClass}
+                        {hunter.charClass === 'Paladin' ? '🛡️ Paladin · Tank' : hunter.charClass}
                       </span>
                       <span className={`text-[10px] font-medium truncate ${action.color}`}>
                         {action.text}
@@ -129,7 +129,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
 
                 {/* HP + Mood micro-bars */}
                 <div className="flex items-center gap-1.5 mt-1.5">
-                  <div className="flex-1 h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-700/50" title={`HP ${Math.round(hunter.hp)}/${hunter.maxHp + hunter.armor.hpBonus + hunter.accessory.hpBonus}`}>
+                  <div className="flex-1 h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-700/50" title={`HP ${Math.round(hunter.hp)}/${hunter.maxHp + hunter.armor.hpBonus + hunter.accessory.hpBonus}${(hunter.shieldHp ?? 0) > 0 ? ` + 🛡️${Math.round(hunter.shieldHp)}` : ''}`}>
                     <div
                       className={`h-full ${hpRatio > 0.5 ? 'bg-emerald-400' : hpRatio > 0.25 ? 'bg-amber-400' : 'bg-red-400'}`}
                       style={{ width: `${hpRatio * 100}%` }}
@@ -144,6 +144,11 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                   {(hunter.deaths ?? 0) > 0 && (
                     <span className="text-[9px] font-mono text-red-300/80 shrink-0" title="Times knocked down">
                       💀{hunter.deaths}
+                    </span>
+                  )}
+                  {(hunter.shieldHp ?? 0) > 0 && (hunter.shieldTimer ?? 0) > 0 && (
+                    <span className="text-[9px] font-mono text-sky-300 shrink-0" title={`Aegis shield ${Math.round(hunter.shieldHp)}`}>
+                      🛡️{Math.round(hunter.shieldHp)}
                     </span>
                   )}
                 </div>

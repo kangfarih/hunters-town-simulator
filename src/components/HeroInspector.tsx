@@ -63,6 +63,9 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
   const moodPercent = Math.max(0, Math.min(100, hunter.mood ?? 100));
   const hasMorale = (hunter.moraleBoostTimer ?? 0) > 0 && (hunter.moraleBoost ?? 0) > 0;
   const hasTonic = (hunter.tonicBoostTimer ?? 0) > 0 && (hunter.tonicBoost ?? 0) > 0;
+  const isTank = hunter.charClass === 'Paladin';
+  const shieldHp = Math.max(0, Math.round(hunter.shieldHp ?? 0));
+  const hasShield = shieldHp > 0 && (hunter.shieldTimer ?? 0) > 0;
 
   return (
     <div className="absolute right-3 top-20 bottom-3 w-84 max-w-[calc(100vw-24px)] z-20 flex flex-col bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl shadow-black/60 overflow-hidden text-slate-200 pointer-events-auto font-sans">
@@ -91,6 +94,11 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
               <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${frameStyle.border} ${frameStyle.text}`}>
                 {hunter.charClass}
               </span>
+              {isTank && (
+                <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-sky-400/60 bg-sky-500/15 text-sky-300" title="Tank: shields + taunts, guards nearby party">
+                  🛡️ Tank
+                </span>
+              )}
               <span className="text-xs font-mono font-bold text-amber-400">
                 Lv.{hunter.level}
               </span>
@@ -158,6 +166,25 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
                 style={{ width: `${hpPercent}%` }}
               />
             </div>
+            {hasShield && (
+              <div className="mt-1.5">
+                <div className="flex justify-between text-[10px] mb-1">
+                  <span className="text-sky-300 font-bold">🛡️ Aegis Shield</span>
+                  <span className="font-mono text-sky-200">
+                    {shieldHp} · {Math.ceil(hunter.shieldTimer)}s
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-sky-500/40">
+                  <div
+                    className="h-full bg-gradient-to-r from-sky-400 to-blue-300 transition-all duration-200"
+                    style={{ width: `${Math.max(0, Math.min(100, (shieldHp / effectiveMaxHp) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {isTank && !hasShield && (
+              <div className="mt-1 text-[10px] text-slate-500 font-mono">🛡️ No aegis — next Smite raises a shield.</div>
+            )}
           </div>
 
           <div>

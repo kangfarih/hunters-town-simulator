@@ -124,6 +124,11 @@ export interface Hunter {
   tonicBoostTimer: number; // seconds remaining on the tonic buff
   deaths: number; // times knocked down and rescued by the clinic
 
+  // Paladin tank kit (transient, never drives saves): absorb shield + taunt anchor.
+  // shieldHp absorbs incoming monster damage first; shieldTimer ticks down in updateHunterAI.
+  shieldHp: number;
+  shieldTimer: number;
+
   // Visual animation timers
   animFrame: number;
   animTick: number;
@@ -156,6 +161,12 @@ export interface Monster {
   targetHunterId: string | null;
   attackCooldown: number;
   roamPauseTimer: number; // idle seconds before picking the next roam target
+
+  // Paladin taunt lock (transient, runtime-only): forces targetHunterId to the
+  // taunting Paladin until tauntTimer (sim-seconds) expires. Cleared on leash,
+  // knockdown, or invalid taunter.
+  tauntHunterId: string | null;
+  tauntTimer: number;
   
   isBoss?: boolean;
   animFrame: number;
