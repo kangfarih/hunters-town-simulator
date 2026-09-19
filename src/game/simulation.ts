@@ -440,6 +440,10 @@ export class GameSimulation {
   // partyIds dissolve to null on load and parties reform live).
   public parties: Map<string, Party> = new Map();
   private partyTimer: number = 0;
+  // Party-rescue cooldowns (runtime-only, never saved): hunterId -> simTime
+  // of the last field rescue. Bounded by town capacity (hunters are never
+  // removed, only retrained), so no pruning needed.
+  private lastPartyRescue: Map<string, number> = new Map();
 
   // Kill-switch for saving (used by Reset World so the pagehide
   // autosave doesn't resurrect the cleared save during reload)
@@ -698,12 +702,12 @@ export class GameSimulation {
 
   /**
    * Plaza LFP muster + matching pass. Motivated solo seekers (crowded or
-   * ambitious, in HUNTING/FIGHTING, cooldown expired, not already at the
-   * plaza) are rerouted to the town plaza to wait as LOOKING_FOR_PARTY
-   * (12s budget). The matching pass then groups plaza seekers by
-   * preferredZone + level ±3 — filling existing parties <5 first, then
-   * forming new greedy groups to 5 — and every matched hunter leaves for
-   * the hunt immediately. Logs formations only.
+   * ambitious, in HUNTING/FIGHTING/TRAVELING_TO_HUNT, cooldown expired, not
+   * already at the plaza) are rerouted to the town plaza to wait as
+   * LOOKING_FOR_PARTY (12s budget). The matching pass then groups plaza
+   * seekers by preferredZone + level ±4 — filling existing parties <5 first,
+   * then forming new greedy groups to 5 — and every matched hunter leaves
+   * for the hunt immediately. Logs formations only.
    */
   public runPartyFormation() {
     if (!this.agentConfig.partiesEnabled) return;
@@ -711,7 +715,7 @@ export class GameSimulation {
     // Motivation is snapshotted for all seekers BEFORE rerouting, so the
     // first departure can't un-crowd the zone for the rest of the pack.
     const seekers = this.hunters.filter(h =>
-      h.partyId == null && (h.state === 'HUNTING' || h.state === 'FIGHTING'));
+      h.partyId == null && (h.state === 'HUNTING' || h.state === 'FIGHTING' || h.state === 'TRAVELING_TO_HUNT'));
     const motivated = seekers.filter(h => (h.lfpCooldown ?? 0) <= 0 && (this.isCrowdedFor(h) || this.isAmbitiousFor(h)));
     for (const s of motivated) {
       if (gridDistance(s.gx, s.gy, 29, 29) < 1.5) continue; // already at plaza
@@ -731,8 +735,8 @@ export class GameSimulation {
    * the muster (within 3 of the plaza) are matchable, so compatible seekers
    * visibly wait at the plaza (🔍) before forming; loners wait out their 12s
    * budget and march out solo. Existing parties <5 with a compatible leader
-   * (same preferredZone, leader level ±3) are filled first; leftovers form
-   * new greedy level-sorted groups (within ±3, to 5) per preferredZone.
+   * (same preferredZone, leader level ±4) are filled first; leftovers form
+   * new greedy level-sorted groups (within ±4, to 5) per preferredZone.
    * Every matched hunter leaves for the hunt at once so no one idles at the
    * plaza after matching.
    */
@@ -744,14 +748,14 @@ export class GameSimulation {
     const lfp = this.hunters.filter(h => h.state === 'LOOKING_FOR_PARTY' && h.partyId == null && atPlaza(h));
     const atPlazaMotivated = this.hunters.filter(h =>
       h.partyId == null &&
-      (h.state === 'HUNTING' || h.state === 'FIGHTING') &&
+      (h.state === 'HUNTING' || h.state === 'FIGHTING' || h.state === 'TRAVELING_TO_HUNT') &&
       atPlaza(h) &&
       (this.isCrowdedFor(h) || this.isAmbitiousFor(h)));
     const pool = [...lfp, ...atPlazaMotivated];
     if (pool.length === 0) return;
     const unplaced = new Set(pool.map(h => h.id));
 
-    // 1. Fill existing parties first (same preferredZone, leader level ±3, cap 5).
+    // 1. Fill existing parties first (same preferredZone, leader level ±4, cap 5).
     for (const p of this.parties.values()) {
       const live = p.memberIds
         .map(id => this.hunters.find(h => h.id === id))
@@ -766,7 +770,7 @@ export class GameSimulation {
         if (live.length >= 5) break;
         if (!unplaced.has(s.id)) continue;
         if (this.preferredZone(s.level) !== lz) continue;
-        if (Math.abs(s.level - leader.level) > 3) continue;
+        if (Math.abs(s.level - leader.level) > 4) continue;
         p.memberIds.push(s.id);
         s.partyId = p.id;
         live.push(s);
@@ -775,7 +779,7 @@ export class GameSimulation {
       }
     }
 
-    // 2. Form new parties: group by preferredZone, greedy fill to 5 within ±3 levels.
+    // 2. Form new parties: group by preferredZone, greedy fill to 5 within ±4 levels.
     const byZone = new Map<number, Hunter[]>();
     for (const s of pool) {
       if (!unplaced.has(s.id)) continue;
@@ -790,7 +794,7 @@ export class GameSimulation {
       while (i < list.length) {
         const group: Hunter[] = [list[i]];
         i++;
-        while (group.length < 5 && i < list.length && list[i].level - group[0].level <= 3) {
+        while (group.length < 5 && i < list.length && list[i].level - group[0].level <= 4) {
           group.push(list[i]);
           i++;
         }
@@ -2223,6 +2227,13 @@ export class GameSimulation {
         // shares floor the others and hand the remainder to the killer so
         // the distributed sum always equals the computed total.
         const n = recipients.length;
+        // Party bonus pool: conjured extra spoils so sharing doesn't tax
+        // members 33-83% vs solo. Conservative: +15% EXP / +10% gold per
+        // head beyond the killer, applied to post-gray totals before the
+        // share split (town tax computed on the post-bonus total, as solo).
+        // 0-EXP (gray) stays 0 — the multiplier can't resurrect gray kills.
+        expTotal = Math.round(expTotal * (1 + 0.15 * (n - 1)));
+        goldTotal = Math.round(goldTotal * (1 + 0.10 * (n - 1)));
         const otherExp = Math.floor(expTotal / (n + 1));
         const killerExp = expTotal - otherExp * (n - 1);
         const otherGold = Math.floor(goldTotal / (n + 1));
@@ -3000,6 +3011,34 @@ export class GameSimulation {
   }
 
   private handleHunterDefeat(hunter: Hunter, monster: Monster) {
+    // Party rescue: a live party member within 6 cells (the share radius)
+    // steadies the fallen hunter — survive in place at 30% maxHp instead of
+    // a clinic warp, once per 90s per hunter. Stays in the party; deaths
+    // still count so the auto-director stays honest. A second knockdown
+    // inside the cooldown falls through to the normal clinic trip.
+    // (30% lands just under the 35% elixir threshold, so a carried brew is
+    // auto-drunk next tick — rescue plus elixir, not rescue instead of it.)
+    const party = this.partyOf(hunter);
+    if (party) {
+      const last = this.lastPartyRescue.get(hunter.id) ?? -Infinity;
+      if (this.simTime - last >= 90) {
+        const savior = this.partyMembers(hunter).find(m =>
+          m.id !== hunter.id && m.hp > 0 &&
+          gridDistance(m.gx, m.gy, hunter.gx, hunter.gy) <= 6);
+        if (savior) {
+          this.lastPartyRescue.set(hunter.id, this.simTime);
+          hunter.hp = Math.round(this.effectiveMaxHp(hunter) * 0.3);
+          hunter.deaths++;
+          this.totalHunterDeaths++;
+          this.windowDeaths++;
+          this.evaluateDirector();
+          hunter.targetMonsterId = null;
+          this.addFloatingText(`🛡️ ${savior.name.split(' ')[0]} SAVES ${hunter.name.split(' ')[0]}!`, hunter.gx, hunter.gy, '#86efac', 13);
+          this.addLog('combat', `${savior.name} steadied ${hunter.name} in the field — no clinic trip!`, hunter.name);
+          return;
+        }
+      }
+    }
     hunter.hp = 1;
     hunter.deaths++;
     this.totalHunterDeaths++;
