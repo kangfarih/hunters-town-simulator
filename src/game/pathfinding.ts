@@ -41,6 +41,11 @@ export function isWallCell(cx: number, cy: number): boolean {
   // horizontal arm (cy==39, cx 37..41) stay walkable so hunters can cross
   // between any regions without detouring through the outer gates.
   if (isHubCell(cx, cy)) return false;
+  // West palisade: seals the dungeon strip (gx 0..19, gy 20..59) from
+  // town/crypt. The old crypt-side gate cell (19,41) is SEALED solid —
+  // entry is teleport-only via the town portal lobby, so the whole run
+  // stays wall (no walkable crossing, no A* route in or out).
+  if (cx === 19 && inRange(cy, 20, 59)) return true;
   // East wall of town (town | forest), gate at gy 29..31 (Town Gate road)
   if (cx === 39 && inRange(cy, 20, 38)) return !inRange(cy, 29, 31);
   // South wall of town (town | graveyard), gate at gx 29..31 (South Gate)

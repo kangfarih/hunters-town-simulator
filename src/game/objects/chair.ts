@@ -7,8 +7,8 @@ import { gridToScreen } from '../isometric';
 import type { GameSimulation } from '../simulation';
 import type { Hunter } from '../types';
 import { createPixelCanvas, fillIsoTop, isoPath } from './iso';
-import { southRowSlots } from './rows';
-import { createTableTexture, tableSpotForPair } from './table';
+import { southRowSlots, tavernTableSpot } from './rows';
+import { createTableTexture } from './table';
 
 /** Wooden tavern chair: billboard backrest + true iso diamond seat. */
 export function createChairTexture(): Texture {
@@ -68,11 +68,12 @@ export function createChairTexture(): Texture {
 }
 
 /**
- * Tavern seat grid positions: south-row grid at (gx, gy), deterministic
- * order so the nth resting hunter (sorted by id) sits on the nth seat.
+ * Tavern seat grid positions: south-row grid hugging the footprint's
+ * south side (gx, gy, w, h), west to east, 3 per row. Deterministic order
+ * so the nth resting hunter (sorted by id) sits on the nth seat.
  */
-export function tavernSeatPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  return southRowSlots(gx, gy, capacity);
+export function tavernSeatPositions(gx: number, gy: number, w: number, h: number, capacity: number): { x: number; y: number }[] {
+  return southRowSlots(gx, gy, w, h, capacity);
 }
 
 /**
@@ -91,7 +92,7 @@ export function seatFor(sim: GameSimulation, hunter: Hunter): { x: number; y: nu
     .sort();
   const idx = resters.indexOf(hunter.id);
   if (idx < 0) return null;
-  const seats = tavernSeatPositions(tavern.gx, tavern.gy, capacity);
+  const seats = tavernSeatPositions(tavern.gx, tavern.gy, tavern.width, tavern.height, capacity);
   return idx < seats.length ? seats[idx] : null;
 }
 
@@ -125,7 +126,7 @@ export function renderTavernYard(
       cache.delete(b.id);
     }
 
-    const seats = tavernSeatPositions(b.gx, b.gy, capacity);
+    const seats = tavernSeatPositions(b.gx, b.gy, b.width, b.height, capacity);
     const sprites: Sprite[] = [];
     for (const seat of seats) {
       const p = gridToScreen(seat.x, seat.y);
@@ -137,9 +138,10 @@ export function renderTavernYard(
       container.addChild(chair);
       sprites.push(chair);
     }
-    // One table per 2 chairs on a snapped tile center (see table.ts).
+    // One table per 2 chairs on its own dedicated row-1 tile: diners sit
+    // north of it, facing south to the table (see rows.tavernTableSpot).
     for (let i = 0; i + 1 < seats.length; i += 2) {
-      const t = tableSpotForPair(seats[i], seats[i + 1]);
+      const t = tavernTableSpot(b.gx, b.gy, b.width, b.height, i / 2);
       const p = gridToScreen(t.x, t.y);
       const table = new Sprite(tableTexture);
       table.anchor.set(0.5, 0.85);

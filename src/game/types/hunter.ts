@@ -7,6 +7,7 @@ export type HunterState =
   | 'REGISTERING'
   | 'WANDERING_TOWN'
   | 'LOOKING_FOR_PARTY'
+  | 'DUNGEON_LOBBY'
   | 'TRAVELING_TO_HUNT'
   | 'HUNTING'
   | 'FIGHTING'

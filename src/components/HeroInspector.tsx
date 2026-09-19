@@ -13,6 +13,7 @@ interface HeroInspectorProps {
   onToggleFollow: () => void;
   partyMembers?: Hunter[];
   isPartyLeader?: boolean;
+  inDungeon?: boolean;
 }
 
 export const HeroInspector: React.FC<HeroInspectorProps> = ({
@@ -21,7 +22,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
   isFollowing,
   onToggleFollow,
   partyMembers,
-  isPartyLeader
+  isPartyLeader,
+  inDungeon = false
 }) => {
   const frameStyle = { border: 'border-slate-500', bg: 'bg-slate-500/20', text: 'text-slate-300', glow: 'shadow-slate-500/20' };
 
@@ -51,6 +53,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
         return { label: '🧪 Brewing Elixirs at Cauldron', color: 'text-emerald-400 bg-emerald-950/60 border-emerald-500/40 animate-pulse' };
       case 'LOOKING_FOR_PARTY':
         return { label: '🔍 Looking for Party', color: 'text-cyan-300 bg-cyan-950/60 border-cyan-500/40 animate-pulse' };
+      case 'DUNGEON_LOBBY':
+        return { label: '🌀 Waiting at dungeon portal', color: 'text-violet-300 bg-violet-950/60 border-violet-500/40 animate-pulse' };
       default:
         return { label: '✨ Sanctuary Stroll', color: 'text-slate-400 bg-slate-900 border-slate-700' };
     }
@@ -108,6 +112,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
             <h2 className="text-sm font-bold text-white truncate mt-0.5" title={hunter.name}>
               {hunter.state === 'LOOKING_FOR_PARTY' ? (
                 <span className="mr-1" title="Looking for party">🔍</span>
+              ) : hunter.state === 'DUNGEON_LOBBY' ? (
+                <span className="mr-1" title="Waiting at dungeon portal">🌀</span>
               ) : hunter.partyId ? (
                 isPartyLeader ? (
                   <span className="text-amber-400 mr-1" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="Party leader">♛</span>
@@ -142,7 +148,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
 
         {/* Live Autonomous Behavior Status */}
         <div className={`mt-3 px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center justify-between ${status.color}`}>
-          <span>{status.label}</span>
+          <span>{status.label}{inDungeon ? ' · 🗝️ In the Vault' : null}</span>
           <button
             onClick={onToggleFollow}
             className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${

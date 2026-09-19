@@ -65,8 +65,8 @@ export function createVatTexture(): Texture {
  * Cauldron station grid positions: south-row grid at (gx, gy),
  * deterministic order so the nth brewer (sorted by id) takes the nth vat.
  */
-export function cauldronStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  return southRowSlots(gx, gy, capacity);
+export function cauldronStationPositions(gx: number, gy: number, w: number, h: number, capacity: number): { x: number; y: number }[] {
+  return southRowSlots(gx, gy, w, h, capacity);
 }
 
 /** Vat grid position for a brewing hunter, or null with none. */
@@ -83,7 +83,7 @@ export function cauldronStationFor(sim: GameSimulation, hunter: Hunter): { x: nu
     .sort();
   const idx = brewers.indexOf(hunter.id);
   if (idx < 0) return null;
-  const stations = cauldronStationPositions(lab.gx, lab.gy, capacity);
+  const stations = cauldronStationPositions(lab.gx, lab.gy, lab.width, lab.height, capacity);
   return idx < stations.length ? stations[idx] : null;
 }
 
@@ -112,7 +112,7 @@ export function renderLabYard(
       cache.delete(b.id);
     }
 
-    const stations = cauldronStationPositions(b.gx, b.gy, capacity);
+    const stations = cauldronStationPositions(b.gx, b.gy, b.width, b.height, capacity);
     const sprites: Sprite[] = [];
     for (const station of stations) {
       const p = gridToScreen(station.x, station.y);

@@ -6,6 +6,7 @@
 import type { Container, Sprite } from 'pixi.js';
 import type { GameSimulation } from '../simulation';
 import type { Hunter } from '../types';
+import { lobbySeatPositions } from '../dungeon';
 import { renderTavernYard, seatFor, type DecorCache } from './chair';
 import { renderClinicYard, bedFor } from './bed';
 import { renderForgeYard, forgeStationFor } from './anvil';
@@ -64,6 +65,19 @@ export function clearYards(state: YardState): void {
 }
 
 /**
+ * Dungeon portal lobby seat for a waiting hunter (mirrors the tavern
+ * chair pattern): the nth seated waiter (sorted by id) sits on the nth
+ * lobby chair. Returns null while unseated (still walking to the portal).
+ */
+export function lobbySeatFor(sim: GameSimulation, hunter: Hunter): { x: number; y: number } | null {
+  if (hunter.state !== 'DUNGEON_LOBBY') return null;
+  const entry = sim.lobby.find(e => e.hunterId === hunter.id);
+  if (!entry) return null;
+  const seats = lobbySeatPositions();
+  return seats[entry.seatIndex] ?? null;
+}
+
+/**
  * Station spot for a hunter across all yards (tavern > clinic > forge >
  * lab > academy priority, matching render order), or null when free.
  * Callers offset slightly south (+0.15) so the prop peeks behind the sprite.
@@ -76,6 +90,7 @@ export function stationSpotFor(
     bedFor(sim, hunter) ??
     forgeStationFor(sim, hunter) ??
     cauldronStationFor(sim, hunter) ??
-    academyStationFor(sim, hunter)
+    academyStationFor(sim, hunter) ??
+    lobbySeatFor(sim, hunter)
   );
 }

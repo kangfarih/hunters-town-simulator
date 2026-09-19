@@ -58,8 +58,8 @@ export function createAnvilTexture(): Texture {
  * Forge station grid positions: south-row grid at (gx, gy), deterministic
  * order so the nth smithing hunter (sorted by id) takes the nth anvil.
  */
-export function forgeStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  return southRowSlots(gx, gy, capacity);
+export function forgeStationPositions(gx: number, gy: number, w: number, h: number, capacity: number): { x: number; y: number }[] {
+  return southRowSlots(gx, gy, w, h, capacity);
 }
 
 /** Anvil grid position for a smithing hunter, or null with none. */
@@ -76,7 +76,7 @@ export function forgeStationFor(sim: GameSimulation, hunter: Hunter): { x: numbe
     .sort();
   const idx = smiths.indexOf(hunter.id);
   if (idx < 0) return null;
-  const stations = forgeStationPositions(forge.gx, forge.gy, capacity);
+  const stations = forgeStationPositions(forge.gx, forge.gy, forge.width, forge.height, capacity);
   return idx < stations.length ? stations[idx] : null;
 }
 
@@ -105,7 +105,7 @@ export function renderForgeYard(
       cache.delete(b.id);
     }
 
-    const stations = forgeStationPositions(b.gx, b.gy, capacity);
+    const stations = forgeStationPositions(b.gx, b.gy, b.width, b.height, capacity);
     const sprites: Sprite[] = [];
     for (const station of stations) {
       const p = gridToScreen(station.x, station.y);

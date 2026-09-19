@@ -4,8 +4,10 @@
 import { Container, Sprite, Graphics, Text, TextStyle, Texture } from 'pixi.js';
 import { gridToScreen, MAP_GRID_WIDTH, MAP_GRID_HEIGHT } from '../isometric';
 import { reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from '../pathfinding';
+import { dungeonAt, BOSS_ARENAS, DUNGEON_PORTAL, lobbySeatPositions } from '../dungeon';
 import { SUMMON_PORTAL_POS } from '../simulation';
 import { createIsoTileTexture } from '../textures/tiles';
+import { createChairTexture } from '../objects/chair';
 
 export class TerrainLayer {
   private tileTextures: Record<string, Texture> = {};
@@ -26,6 +28,13 @@ export class TerrainLayer {
         // Special-cased before region mapping; all other mapping unchanged.
         if (isHubCell(gx, gy)) {
           tileType = 'stone_road';
+        }
+        // Sunken dungeon (west strip, wins over the overlapping reserves
+        // below): dark stone, with stone_road arena clearings (r2 circles).
+        else if (dungeonAt(gx, gy)) {
+          const inArena = BOSS_ARENAS.some(a =>
+            (gx - a.x) * (gx - a.x) + (gy - a.y) * (gy - a.y) <= 4);
+          tileType = inArena ? 'stone_road' : 'volcanic_rock';
         }
         // Reserved expansion land (freed northwest bands): dark placeholder,
         // skipping all existing region logic below.
@@ -76,6 +85,27 @@ export class TerrainLayer {
     portalGfx.circle(portalPos.x, portalPos.y + 16, 16).fill({ color: 0x818cf8, alpha: 0.5 });
     portalGfx.circle(portalPos.x, portalPos.y + 16, 8).fill({ color: 0xc7d2fe, alpha: 0.8 });
     container.addChild(portalGfx);
+
+    // Dungeon portal lobby: violet portal gfx on its town tile + one chair
+    // sprite (reused tavern chair texture) per lobby seat. Static decor —
+    // seated waiters render on the chairs via the hunter layer (idle
+    // frames, like the tavern seating pattern).
+    const vaultGfx = new Graphics();
+    const vaultPos = gridToScreen(DUNGEON_PORTAL.x, DUNGEON_PORTAL.y);
+    vaultGfx.circle(vaultPos.x, vaultPos.y + 16, 24).fill({ color: 0x8b5cf6, alpha: 0.35 });
+    vaultGfx.circle(vaultPos.x, vaultPos.y + 16, 16).fill({ color: 0xa78bfa, alpha: 0.5 });
+    vaultGfx.circle(vaultPos.x, vaultPos.y + 16, 8).fill({ color: 0xddd6fe, alpha: 0.8 });
+    container.addChild(vaultGfx);
+    const lobbyChair = createChairTexture();
+    for (const seat of lobbySeatPositions()) {
+      const p = gridToScreen(seat.x, seat.y);
+      const chair = new Sprite(lobbyChair);
+      chair.anchor.set(0.5, 0.85);
+      chair.x = p.x;
+      chair.y = p.y;
+      chair.zIndex = (seat.x + seat.y) * 100 + 12;
+      container.addChild(chair);
+    }
 
     // Faint labels at each reserved region's center tile
     const reserveNumerals = ['I', 'II', 'III', 'IV', 'V'];

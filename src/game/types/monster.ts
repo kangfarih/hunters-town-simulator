@@ -3,8 +3,8 @@ import type { ItemDrop } from './loot';
 export interface Monster {
   id: string;
   name: string;
-  zone: 1 | 2 | 3;
-  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_lich';
+  zone: 1 | 2 | 3 | 4;
+  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_lich' | 'vault_husk' | 'rune_warden' | 'vault_lord' | 'boss_warden' | 'boss_hoarder' | 'boss_primus';
   level: number;
   hp: number;
   maxHp: number;
@@ -38,4 +38,4 @@ export interface Monster {
 }
 
 export type MonsterType = Monster['type'];
-export type ZoneId = 1 | 2 | 3;
+export type ZoneId = 1 | 2 | 3 | 4;

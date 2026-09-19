@@ -63,17 +63,5 @@ export function createTableTexture(): Texture {
   return Texture.from(canvas);
 }
 
-/**
- * Table spot for a chair pair: pair midpoint snapped to the nearest tile
- * center. Midpoints of two tile centers land on corners/cracks, so the
- * snap keeps tables on diamonds. At max tavern capacity (4) the snapped
- * tiles stay free of chair slots by construction of the south-row grid.
- */
-export function tableSpotForPair(
-  a: { x: number; y: number }, b: { x: number; y: number }
-): { x: number; y: number } {
-  return {
-    x: Math.floor((a.x + b.x) / 2) + 0.5,
-    y: Math.floor((a.y + b.y) / 2) + 0.5,
-  };
-}
+// Table placement lives in rows.ts (tavernTableSpot): dedicated row-1
+// tiles per chair pair, so tables never share a tile with a chair.

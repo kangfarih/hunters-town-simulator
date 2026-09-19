@@ -4,6 +4,7 @@ import {
   Volume2, VolumeX, Eye, Compass, Zap, Flame, Shield, TreePine, Sparkles 
 } from 'lucide-react';
 import { soundFx } from '../game/audioSynth';
+import type { DungeonState } from '../game/dungeon';
 
 interface OmniscienceHeaderProps {
   townGold: number;
@@ -19,6 +20,10 @@ interface OmniscienceHeaderProps {
   onRushSummon: () => void;
   onJumpCamera: (zone: 'town' | 'forest' | 'graveyard' | 'volcano') => void;
   isBossActive: boolean;
+  dungeonState?: DungeonState;
+  dungeonBossesDown?: number;
+  dungeonLockoutSecs?: number;
+  dungeonMembers?: number;
 }
 
 export const OmniscienceHeader: React.FC<OmniscienceHeaderProps> = ({
@@ -34,7 +39,11 @@ export const OmniscienceHeader: React.FC<OmniscienceHeaderProps> = ({
   onTogglePause,
   onRushSummon,
   onJumpCamera,
-  isBossActive
+  isBossActive,
+  dungeonState,
+  dungeonBossesDown = 0,
+  dungeonLockoutSecs = 0,
+  dungeonMembers = 0
 }) => {
   const [isMuted, setIsMuted] = React.useState(soundFx.isMuted);
 
@@ -128,6 +137,40 @@ export const OmniscienceHeader: React.FC<OmniscienceHeaderProps> = ({
 
       {/* Right: Camera Jump Presets & Simulation Controls */}
       <div className="flex items-center gap-2 pointer-events-auto">
+        {/* Dungeon Vault Status Chip */}
+        {dungeonState !== undefined && (
+          <div
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold font-mono border shadow-lg ${
+              dungeonState === 'active'
+                ? 'bg-purple-950/90 text-purple-200 border-purple-500/50 shadow-purple-900/40'
+                : dungeonState === 'cleared'
+                  ? 'bg-amber-950/90 text-amber-200 border-amber-500/50 shadow-amber-900/40'
+                  : 'bg-slate-900/90 text-slate-300 border-slate-700/60 shadow-black/40'
+            }`}
+            title={
+              dungeonState === 'dormant'
+                ? 'The Vault is sealed. A full party of 5 level-15 hunters may descend.'
+                : dungeonState === 'active'
+                  ? 'Delvers are inside the Vault fighting the three bosses.'
+                  : dungeonState === 'lockout'
+                    ? 'The Vault gate is shut. It re-opens when the timer expires.'
+                    : 'The Vault is cleared! The gate re-opens when the timer expires.'
+            }
+          >
+            {dungeonState === 'dormant' && (
+              <span>🗝️ Vault: sealed — full Lv.15 party of 5</span>
+            )}
+            {dungeonState === 'active' && (
+              <span>🗝️ Vault: Bosses {dungeonBossesDown}/3 · {dungeonMembers} inside</span>
+            )}
+            {dungeonState === 'lockout' && (
+              <span>🗝️ Vault resets in {dungeonLockoutSecs}s</span>
+            )}
+            {dungeonState === 'cleared' && (
+              <span>🎉 Vault cleared!</span>
+            )}
+          </div>
+        )}
         {/* Boss Alert Pulse */}
         {isBossActive && (
           <button

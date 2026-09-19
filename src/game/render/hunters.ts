@@ -198,10 +198,13 @@ export class HuntersLayer {
       hData.hpBar.zIndex = hData.sprite.zIndex + 5;
 
       // Name & Level (party icon prefix beside the name; LFP 🔍 takes
-      // precedence while seeking; boss/monster labels untouched)
+      // precedence while seeking, lobby 🌀 while awaiting the Vault;
+      // boss/monster labels untouched)
       // LFP seekers render the idle frame: LOOKING_FOR_PARTY is deliberately
       // absent from the walk-action condition above — they wait at the plaza.
-      const partyIcon = hunter.state === 'LOOKING_FOR_PARTY' ? '🔍 ' : leaderIds.has(hunter.id) ? '♛ ' : hunter.partyId ? '👥 ' : '';
+      // DUNGEON_LOBBY likewise idles (seated waiters pin to their chairs via
+      // stationSpotFor; walkers-to-portal hold the idle frame like LFP).
+      const partyIcon = hunter.state === 'LOOKING_FOR_PARTY' ? '🔍 ' : hunter.state === 'DUNGEON_LOBBY' ? '🌀 ' : leaderIds.has(hunter.id) ? '♛ ' : hunter.partyId ? '👥 ' : '';
       hData.nameText.text = `${partyIcon}Lv.${hunter.level} ${hunter.name.split(' ')[0]}`;
       hData.nameText.style.fill = partyColor(hunter.partyId) ?? '#cbd5e1';
       hData.nameText.x = screenPos.x;

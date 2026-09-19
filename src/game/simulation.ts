@@ -7,6 +7,17 @@ import {
 import { gridDistance, getIsometricFacing } from './isometric';
 import { findPath, PathPoint, reserveAt } from './pathfinding';
 import { soundFx } from './audioSynth';
+// Dungeon endgame (phases 1+2): map/instance data lives in ./dungeon;
+// simulation owns entry checks, spawning, and the lockout tick.
+import {
+  dungeonAt, generateTrashPacks, BOSS_DEFS, BOSS_ARENAS,
+  defaultDungeonInstance, needRoll, dungeonBossIndex,
+  DUNGEON_LOCKOUT_SECONDS, DUNGEON_EJECT,
+  DUNGEON_CLEAR_BONUS_GOLD,
+  DUNGEON_PORTAL, DUNGEON_STAGING, LOBBY_SEATS,
+  lobbySeatFits, lobbySeatPositions,
+} from './dungeon';
+import type { DungeonInstance } from './dungeon';
 // Modular data tables (pure: no simulation state). Simulation owns behavior;
 // everything a designer tweaks lives in data/.
 import {
@@ -78,7 +89,9 @@ export const ZONE_ROAM_BOUNDS = DATA_ZONE_ROAM_BOUNDS;
 // Local save persistence
 export const SAVE_KEY = DATA_SAVE_KEY;
 const LEGACY_SAVE_KEY = 'evil-hunter-tycoon-save-v1';
-const SAVE_VERSION = 3;
+const SAVE_VERSION = 4;
+// Hunter level cap (dungeon gate): gainExp banks nothing at/above this.
+export const HUNTER_LEVEL_CAP = 15;
 // Grid shift applied when migrating pre-shift (v1) saves: every settled
 // coordinate moves +20/+20 as town relocated NW→center.
 const SAVE_SHIFT = 20;
@@ -194,6 +207,11 @@ export class GameSimulation {
   // Whirl slow: per-hunter spin burst mirroring the renderer whirl (0.9s tail). // Whirl slow:
   private whirlSlow: Map<string, { burst: number; lastZoneId: string | null }> = new Map(); // Whirl slow:
 
+  // Dungeon portal lobby seats: runtime-only (EXCLUDED from save
+  // snapshots like parties; every entry dissolves on load and the lobby
+  // reforms live). { hunterId, seatIndex } — one seat per hunter.
+  public lobby: { hunterId: string; seatIndex: number }[] = [];
+
   // Kill-switch for saving (used by Reset World so the pagehide
   // autosave doesn't resurrect the cleared save during reload)
   public saveEnabled: boolean = true;
@@ -209,6 +227,10 @@ export class GameSimulation {
   // Boss Spawn Timer
   public bossSpawnTimer: number = 90; // Spawns an Evil Lich every 90 seconds
   public isBossActive: boolean = false;
+
+  // Dungeon instance (phase 2): mobs live in the normal monsters array
+  // tagged zone 4; only this header is tracked here.
+  public dungeon: DungeonInstance = defaultDungeonInstance();
 
   constructor(skipSeed: boolean = false) {
     this.buildings = JSON.parse(JSON.stringify(INITIAL_BUILDINGS));
@@ -767,7 +789,7 @@ export class GameSimulation {
     this.spawnMonster(3, 'golem');
   }
 
-  public spawnMonster(zone: 1 | 2 | 3, type: Monster['type'], isBoss: boolean = false): Monster {
+  public spawnMonster(zone: 1 | 2 | 3 | 4, type: Monster['type'], isBoss: boolean = false, at?: { x: number; y: number }): Monster {
     let gx = 0;
     let gy = 0;
 
@@ -779,10 +801,20 @@ export class GameSimulation {
       // Gloomy Graveyard: gx 22..36, gy 42..54
       gx = 22 + Math.random() * 14;
       gy = 42 + Math.random() * 12;
+    } else if (zone === 4) {
+      // Dungeon Depths (unseeded fallback): interior of the west strip
+      gx = 2 + Math.random() * 15;
+      gy = 22 + Math.random() * 35;
     } else {
       // Volcanic Ruins: gx 42..56, gy 42..56
       gx = 42 + Math.random() * 14;
       gy = 42 + Math.random() * 14;
+    }
+
+    // Explicit placement (dungeon stocking): pin the spawn point.
+    if (at) {
+      gx = at.x;
+      gy = at.y;
     }
 
     // Base stats come from the monster roster (./data/monsters) — to add a
@@ -883,6 +915,18 @@ export class GameSimulation {
       this.spawnBoss();
     }
 
+    // 2b. Dungeon lockout/clear: the gate re-opens when the timer expires
+    // (a cleared instance just sits on its timer until then — no wipe
+    // eject while cleared; fresh seed on next entry).
+    if (this.dungeon.state === 'lockout' || this.dungeon.state === 'cleared') {
+      this.dungeon.lockoutTimer -= effectiveDt;
+      if (this.dungeon.lockoutTimer <= 0) {
+        this.dungeon.lockoutTimer = 0;
+        this.dungeon.state = 'dormant';
+        this.addLog('boss', 'The dungeon gate grinds open once more — the depths await new delvers.');
+      }
+    }
+
     // 2b. Field parties: OFF dissolves everything live; ON runs a
     // matching pass every ~3 sim-seconds.
     if (!this.agentConfig.partiesEnabled) {
@@ -892,6 +936,10 @@ export class GameSimulation {
       // No muster while parties are off: waiting seekers march straight out.
       for (const h of this.hunters) {
         if (h.state === 'LOOKING_FOR_PARTY') this.leaveForHunt(h);
+        if (h.state === 'DUNGEON_LOBBY') {
+          this.releaseLobbySeat(h);
+          this.leaveForHunt(h);
+        }
       }
       this.partyTimer = 0;
     } else {
@@ -906,6 +954,9 @@ export class GameSimulation {
     for (let i = this.hunters.length - 1; i >= 0; i--) {
       this.updateHunterAI(this.hunters[i], effectiveDt);
     }
+
+    // 3a. Portal lobby: a full house of role-fitting seat-holders descends.
+    this.tickLobbyTeleport();
 
     // 3b. Update skill zones (T2): ticks after hunters move, before monsters act.
     this.updateZones(effectiveDt);
@@ -941,6 +992,9 @@ export class GameSimulation {
       this.updateMonsterAI(this.monsters[m], effectiveDt);
     }
 
+    // 4b. Dungeon wipe/eject (phase 4): full delver loss while active.
+    this.checkDungeonWipe();
+
     // 5. Update Floating Text & Skill VFX
     this.updateVfx(effectiveDt);
 
@@ -960,6 +1014,218 @@ export class GameSimulation {
     soundFx.playSmite();
     this.addFloatingText('☠ EVIL LICH LORD HAS AWOKEN! ☠', boss.gx, boss.gy, '#ef4444', 18);
     this.addLog('boss', 'A massive sinister aura emerges: The Evil Lich Lord has spawned in the Volcanic Crater!');
+  }
+
+  // --------------------------------------------------------------------------
+  // DUNGEON INSTANCE (phase 2: entry check + stocking; travel wiring lands
+  // in phase 3, so callers invoke this helper explicitly — AI untouched)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Dungeon entry check: null = admitted, else the reason string.
+   * Requires a live 5-stack of max-level hunters while the gate is dormant.
+   * On admit the instance activates, seeds, and stocks trash + boss
+   * stand-ins (real boss kits land in phase 3).
+   */
+  public tryEnterDungeon(partyId: string): string | null {
+    const party = this.parties.get(partyId);
+    if (!party) return `No such party (${partyId}) — the gate admits formed parties only.`;
+    const live = party.memberIds
+      .map(id => this.hunters.find(h => h.id === id))
+      .filter((h): h is Hunter => h !== undefined && h.hp > 0);
+    if (live.length !== 5) {
+      return `The dungeon gate demands exactly 5 live delvers (found ${live.length}).`;
+    }
+    const low = live.find(h => h.level < HUNTER_LEVEL_CAP);
+    if (low) {
+      return `All delvers must be level ${HUNTER_LEVEL_CAP} (${low.name} is level ${low.level}).`;
+    }
+    if (this.dungeon.state !== 'dormant') {
+      return `The dungeon gate is ${this.dungeon.state} — entry refused.`;
+    }
+    // Admit: activate, seed, snapshot the delvers, and stock the depths.
+    this.dungeon.seed = Date.now();
+    this.dungeon.state = 'active';
+    this.dungeon.bossesDown = [false, false, false];
+    this.dungeon.partyIds = live.map(h => h.id);
+    for (const pack of generateTrashPacks(this.dungeon.seed)) {
+      this.spawnMonster(4, pack.type, false, pack);
+    }
+    for (const def of BOSS_DEFS) {
+      const boss = this.spawnMonster(4, def.type, true, BOSS_ARENAS[def.arena]);
+      boss.name = def.name;
+      boss.level = def.level;
+    }
+    const names = live.map(h => h.name.split(' ')[0]).join(', ');
+    this.addLog('boss', `${names} descended into the dungeon depths!`);
+    return null;
+  }
+
+  /**
+   * Dungeon portal hook (wired — one-line call from the town-hub leave
+   * path in evaluateTownNeeds): an idle max-level hunter with nothing
+   * better to do gathers at the town portal instead of the field while
+   * the instance is dormant. Returns true when routed lobby-side. Inert
+   * otherwise (underleveled, dungeon busy, re-queue cooling down, parties
+   * off) — normal and no-freeze flows never qualify.
+   */
+  private maybeEnterLobby(hunter: Hunter): boolean {
+    if (!this.agentConfig.partiesEnabled) return false;
+    if (hunter.level < HUNTER_LEVEL_CAP) return false;
+    if (this.dungeon.state !== 'dormant') return false;
+    if ((hunter.lfpCooldown ?? 0) > 0) return false;
+    this.removeFromParty(hunter); // field-only parties end at the portal
+    hunter.state = 'DUNGEON_LOBBY';
+    hunter.targetMonsterId = null;
+    hunter.targetBuildingId = null;
+    hunter.targetGx = DUNGEON_PORTAL.x;
+    hunter.targetGy = DUNGEON_PORTAL.y;
+    hunter.stateTimer = 90; // lobby wait budget (sim-seconds)
+    this.addFloatingText('🌀 Awaiting the Vault!', hunter.gx, hunter.gy, '#c4b5fd', 11);
+    return true;
+  }
+
+  /** Live lobby entry for a hunter, if seated. */
+  private lobbySeatOf(hunterId: string): { hunterId: string; seatIndex: number } | null {
+    return this.lobby.find(e => e.hunterId === hunterId) ?? null;
+  }
+
+  /** Release a hunter's lobby seat (no-op when not seated). */
+  private releaseLobbySeat(hunter: Hunter) {
+    const i = this.lobby.findIndex(e => e.hunterId === hunter.id);
+    if (i >= 0) this.lobby.splice(i, 1);
+  }
+
+  /**
+   * Claim the first free seat whose role fits the hunter's class (tank
+   * seat → Paladin/Berserker, heal seat → Cleric, any seats → anyone; one
+   * seat per hunter). Returns the seat index, or null when nothing fits —
+   * e.g. a roster with no tank class leaves the tank seat empty by design
+   * (no crash; the party just never fills).
+   */
+  private claimLobbySeat(hunter: Hunter): number | null {
+    const existing = this.lobbySeatOf(hunter.id);
+    if (existing) return existing.seatIndex;
+    const taken = new Set(this.lobby.map(e => e.seatIndex));
+    for (let i = 0; i < LOBBY_SEATS.length; i++) {
+      if (taken.has(i)) continue;
+      if (!lobbySeatFits(LOBBY_SEATS[i].role, hunter.charClass)) continue;
+      this.lobby.push({ hunterId: hunter.id, seatIndex: i });
+      return i;
+    }
+    return null;
+  }
+
+  /**
+   * Portal-lobby full-house check (tick, after the hunter loop): when all
+   * 5 seats are held by live role-fitting DUNGEON_LOBBY hunters, form them
+   * into a party (leader = highest level) and admit via tryEnterDungeon —
+   * teleporting to the dungeon staging ONLY on admit. A refusal dissolves
+   * the just-formed party and leaves everyone seated (DON'T teleport).
+   */
+  private tickLobbyTeleport() {
+    if (!this.agentConfig.partiesEnabled) return;
+    if (this.dungeon.state !== 'dormant') return;
+    if (this.lobby.length !== LOBBY_SEATS.length) return;
+    const seated: Hunter[] = [];
+    for (let i = 0; i < LOBBY_SEATS.length; i++) {
+      const e = this.lobby.find(x => x.seatIndex === i);
+      const h = e ? this.hunters.find(hh => hh.id === e.hunterId) : undefined;
+      if (!h || h.hp <= 0 || h.state !== 'DUNGEON_LOBBY') return;
+      if (!lobbySeatFits(LOBBY_SEATS[i].role, h.charClass)) return;
+      seated.push(h);
+    }
+    const leader = seated.reduce((a, b) => (b.level > a.level ? b : a));
+    const id = `party-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    this.parties.set(id, { id, leaderId: leader.id, memberIds: seated.map(h => h.id), lootTurn: 0 });
+    for (const h of seated) h.partyId = id;
+    if (this.tryEnterDungeon(id) !== null) {
+      this.disbandParty(id);
+      return;
+    }
+    this.lobby = this.lobby.filter(e => !seated.some(h => h.id === e.hunterId));
+    seated.forEach((h, i) => {
+      h.gx = DUNGEON_STAGING.x + (i % 3) - 1;
+      h.gy = DUNGEON_STAGING.y + Math.floor(i / 3);
+      h.targetBuildingId = null;
+      let best: Monster | null = null;
+      let bestDist = Infinity;
+      for (const mob of this.monsters) {
+        if (mob.hp <= 0 || mob.zone !== 4) continue;
+        const d = gridDistance(h.gx, h.gy, mob.gx, mob.gy);
+        if (d < bestDist) { bestDist = d; best = mob; }
+      }
+      if (best) {
+        h.targetMonsterId = best.id;
+        h.targetGx = best.gx;
+        h.targetGy = best.gy;
+      } else {
+        h.targetMonsterId = null;
+        h.targetGx = DUNGEON_STAGING.x;
+        h.targetGy = DUNGEON_STAGING.y;
+      }
+      h.state = 'HUNTING';
+    });
+    this.addFloatingText('🌀 The party descends!', DUNGEON_STAGING.x, DUNGEON_STAGING.y, '#c4b5fd', 16);
+  }
+
+  /**
+   * Dungeon boss kill (phase 3+4): marks bossesDown, pays the guaranteed
+   * epic via need-roll (handled by the caller), and triggers the clear —
+   * state→cleared, celebration, town bonus, re-entry timer. The world-boss
+   * (lich) path is separate and untouched.
+   */
+  private onDungeonBossDown(hunter: Hunter, monster: Monster) {
+    const idx = dungeonBossIndex(monster.type);
+    if (idx >= 0 && idx < 3) this.dungeon.bossesDown[idx] = true;
+    const down = this.dungeon.bossesDown.filter(Boolean).length;
+    this.addFloatingText('🏆 DUNGEON BOSS SLAIN!', monster.gx, monster.gy, '#fbbf24', 18);
+    this.addLog('boss', `${hunter.name} slew ${monster.name}! (${down}/3)`, hunter.name);
+    if (this.dungeon.state === 'active' && this.dungeon.bossesDown.every(Boolean)) {
+      this.dungeon.state = 'cleared';
+      this.dungeon.lockoutTimer = DUNGEON_LOCKOUT_SECONDS;
+      this.townGold += DUNGEON_CLEAR_BONUS_GOLD;
+      this.addFloatingText('🎉 DUNGEON CLEARED!', monster.gx, monster.gy - 1, '#facc15', 18);
+      this.addLog('boss', `The dungeon is CLEARED! The town feasts — +${DUNGEON_CLEAR_BONUS_GOLD}g to the treasury.`);
+    }
+  }
+
+  /**
+   * Wipe detection (phase 4, tick): dungeon active with ≥1 entered party
+   * inside, and every tracked delver down-or-absent (knocked-down clinic
+   * cases count as down; missing hunters count as absent) → eject: live
+   * members to the plaza, zone-4 mobs cleared, state→lockout on the
+   * standard timer, banner + log. No cooldown beyond the lockout.
+   */
+  private checkDungeonWipe() {
+    if (this.dungeon.state !== 'active') return;
+    const ids = this.dungeon.partyIds ?? [];
+    if (ids.length === 0) return;
+    const members = ids.map(id => this.hunters.find(h => h.id === id));
+    const down = (h: Hunter | undefined) => !h || h.hp <= 0 || h.state === 'RECOVERING_CLINIC';
+    if (!members.every(down)) return;
+    for (const h of members) {
+      if (!h || h.hp <= 0) continue;
+      for (const b of this.buildings) {
+        b.currentVisitors = b.currentVisitors.filter(id => id !== h.id);
+      }
+      h.gx = DUNGEON_EJECT.x;
+      h.gy = DUNGEON_EJECT.y;
+      h.targetMonsterId = null;
+      h.targetBuildingId = null;
+      h.state = 'WANDERING_TOWN';
+      h.stateTimer = 1.5;
+    }
+    for (let i = this.monsters.length - 1; i >= 0; i--) {
+      if (this.monsters[i].zone === 4) {
+        this.pathCache.delete(this.monsters[i].id);
+        this.monsters.splice(i, 1);
+      }
+    }
+    this.dungeon.state = 'lockout';
+    this.dungeon.lockoutTimer = DUNGEON_LOCKOUT_SECONDS;
+    this.addFloatingText('💀 PARTY WIPED!', DUNGEON_EJECT.x, DUNGEON_EJECT.y, '#ef4444', 16);
+    this.addLog('boss', 'Party wiped in the dungeon depths — survivors crawl back to the plaza. The gate slams shut.');
   }
 
   // --------------------------------------------------------------------------
@@ -1029,7 +1295,8 @@ export class GameSimulation {
         hunter.state === 'SELLING_LOOT' || hunter.state === 'UPGRADING_GEAR' ||
         hunter.state === 'LEARNING_SKILL' || hunter.state === 'BREWING_ELIXIR' ||
         hunter.state === 'RECOVERING_CLINIC' || hunter.state === 'RESTING_TAVERN' ||
-        hunter.state === 'WANDERING_TOWN' || hunter.state === 'LOOKING_FOR_PARTY')) {
+        hunter.state === 'WANDERING_TOWN' || hunter.state === 'LOOKING_FOR_PARTY' ||
+        hunter.state === 'DUNGEON_LOBBY')) {
       this.removeFromParty(hunter);
     }
 
@@ -1384,6 +1651,32 @@ export class GameSimulation {
         break;
       }
 
+      case 'DUNGEON_LOBBY': {
+        // Town portal lobby: walk to the violet portal, claim the first
+        // role-fitting seat on arrival (tank → Paladin/Berserker, heal →
+        // Cleric, any → anyone; one seat per hunter), then sit out the 90s
+        // wait budget. A full house teleports via tickLobbyTeleport; on
+        // expiry march out SOLO and start the 120s re-queue cooldown
+        // (re-uses the LFP cooldown field — no new fields).
+        const seats = lobbySeatPositions();
+        let entry = this.lobbySeatOf(hunter.id);
+        const dest = entry ? seats[entry.seatIndex]! : DUNGEON_PORTAL;
+        this.moveTowards(hunter, dest.x, dest.y, this.effectiveMoveSpeed(hunter) * 60 * dt); // Whirl slow:
+        if (!entry && gridDistance(hunter.gx, hunter.gy, DUNGEON_PORTAL.x, DUNGEON_PORTAL.y) < 0.8) {
+          if (this.claimLobbySeat(hunter) !== null) {
+            this.addFloatingText('🪑 Taking a seat…', hunter.gx, hunter.gy, '#c4b5fd', 11);
+          }
+        }
+        hunter.stateTimer -= dt;
+        if (hunter.stateTimer <= 0) {
+          this.releaseLobbySeat(hunter);
+          hunter.lfpCooldown = 120;
+          this.addFloatingText('🚶 Portal party never formed — hunting solo', hunter.gx, hunter.gy, '#94a3b8', 11);
+          this.leaveForHunt(hunter);
+        }
+        break;
+      }
+
       case 'LOOKING_FOR_PARTY': {
         // Plaza LFP muster: walk to/stay at the town plaza (29,29) while
         // the matching pass looks for a level-compatible group. No shop
@@ -1503,7 +1796,7 @@ export class GameSimulation {
   /** Whirl slow: movement speed resolves here (x0.7 while whirling). Town states never slow so it can't persist off-field. // Whirl slow: */
   public effectiveMoveSpeed(hunter: Hunter): number { // Whirl slow:
     switch (hunter.state) { // Whirl slow:
-      case 'WANDERING_TOWN': case 'LOOKING_FOR_PARTY': case 'SELLING_LOOT': case 'UPGRADING_GEAR': // Whirl slow:
+      case 'WANDERING_TOWN': case 'LOOKING_FOR_PARTY': case 'DUNGEON_LOBBY': case 'SELLING_LOOT': case 'UPGRADING_GEAR': // Whirl slow:
       case 'LEARNING_SKILL': case 'BREWING_ELIXIR': case 'RECOVERING_CLINIC': case 'RESTING_TAVERN': // Whirl slow:
       case 'SPAWNING': case 'REGISTERING': return hunter.speed; // Whirl slow:
       default: break; // Whirl slow:
@@ -2140,7 +2433,7 @@ export class GameSimulation {
   // (wolf+), Rare 10% (ghoul/drake). Gray kills: no gear roll.
   // --------------------------------------------------------------------------
 
-  private zoneGearTier(zone: 1 | 2 | 3): number {
+  private zoneGearTier(zone: 1 | 2 | 3 | 4): number {
     return dataZoneGearTier(zone);
   }
 
@@ -2215,8 +2508,15 @@ export class GameSimulation {
     // Gray kills: materials/gold only, no gear.
     if (!monster.isBoss && killer.level - monster.level >= this.agentConfig.grayGap) return null;
     if (monster.isBoss) {
+      if (monster.zone === 4) {
+        // Dungeon bosses: ALWAYS exactly 1 epic of RANDOM class
+        // (bypasses the 35% roll and the killer-class smart loot).
+        const def = EPIC_DEFS[Math.floor(Math.random() * EPIC_DEFS.length)];
+        return this.buildEpicGear(def, monster);
+      }
       if (Math.random() >= 0.35) return null;
       // Smart loot: 70% killer-class pool (its weapon + all armors), else any epic.
+      // (Dungeon bosses return above with a guaranteed random-class epic.)
       const classPool = EPIC_DEFS.filter(d => !d.reqClass || d.reqClass === killer.charClass);
       const pool = Math.random() < 0.7 && classPool.length > 0 ? classPool : EPIC_DEFS;
       const def = pool[Math.floor(Math.random() * pool.length)];
@@ -2326,21 +2626,26 @@ export class GameSimulation {
 
   private handleMonsterDefeat(hunter: Hunter, monster: Monster) {    this.totalMonstersDefeated++;
     hunter.killCount++;
-    // Nursery kills don't feed the auto-director: zone-1 spawns only feel
+    // Nursery + dungeon kills don't feed the auto-director: zone-1 spawns only feel
     // half the dynamic swing (zoneDamp 0.5), so counting ~98% forest kills
     // drives survival >80% → buffs to the 3x cap that zone 2/3 feel fully.
     // On-level crypt fights then read as mulch (e.g. Lv8 vs ghoul at 3.2
     // hits-to-die < 6) and isTooHardFor pins everyone in the forest.
-    if (monster.zone !== 1) {
+    // Zone-4 dungeon kills are instanced endgame content — same exclusion.
+    if (monster.zone !== 1 && monster.zone !== 4) {
       this.windowKills++;
       this.evaluateDirector();
     }
 
     if (monster.isBoss) {
-      this.isBossActive = false;
-      this.bossSpawnTimer = 90;
-      this.addFloatingText('🏆 BOSS SLAIN!', monster.gx, monster.gy, '#fbbf24', 18);
-      this.addLog('boss', `${hunter.name} defeated the Evil Lich Lord! The realm is temporarily purified.`, hunter.name);
+      if (monster.zone === 4) {
+        this.onDungeonBossDown(hunter, monster);
+      } else {
+        this.isBossActive = false;
+        this.bossSpawnTimer = 90;
+        this.addFloatingText('🏆 BOSS SLAIN!', monster.gx, monster.gy, '#fbbf24', 18);
+        this.addLog('boss', `${hunter.name} defeated the Evil Lich Lord! The realm is temporarily purified.`, hunter.name);
+      }
     }
 
     // Graduated spoils: overleveled hunters earn no EXP but keep gold/drops
@@ -2373,7 +2678,41 @@ export class GameSimulation {
     }
 
     // Rarity gear roll (extra drop on top of guaranteed materials; gray = none).
-    const gearDrop = this.rollEquipmentDrop(monster, hunter);
+    // Dungeon-boss epics resolve here via need-roll (winner force-equipped,
+    // else vended into the split below) so the normal pipeline never sees them.
+    let gearDrop = this.rollEquipmentDrop(monster, hunter);
+    if (monster.isBoss && monster.zone === 4 && gearDrop && gearDrop.equipment) {
+      const epic = gearDrop.equipment;
+      const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
+      const inParty = party ? this.partyMembers(hunter).filter(m => m.hp > 0) : [hunter];
+      const candidates = inParty.length > 0 ? inParty : [hunter];
+      const winnerId = needRoll(
+        candidates.map(m => ({ id: m.id, name: m.name, charClass: m.charClass })),
+        epic.requiredClass ?? undefined,
+      );
+      const winner = candidates.find(m => m.id === winnerId) ?? null;
+      const epicName = dataEquipmentDisplayName(epic.rarity, epic.name);
+      if (winner) {
+        // Need win: force-equip/grant to the winner (old piece trades in at half).
+        const slot = epic.type === 'armor' ? 'armor' : 'weapon';
+        const current = slot === 'weapon' ? winner.weapon : winner.armor;
+        const oldValue = Math.floor(gearSellPrice(current.tier, current.rarity ?? 'Common') / 2);
+        if (oldValue > 0) winner.gold += oldValue;
+        if (slot === 'weapon') winner.weapon = { ...epic };
+        else winner.armor = { ...epic };
+        winner.hp = Math.min(this.effectiveMaxHp(winner), winner.hp + Math.max(0, (epic.hpBonus ?? 0) - (current.hpBonus ?? 0)));
+        this.addFloatingText(`🎲 ${winner.name} won ${epicName} (need)!`, monster.gx, monster.gy - 0.5, rarityHex('Epic'), 14);
+        this.addLog('boss', `${winner.name} won ${epicName} (need) from ${monster.name}!`, winner.name);
+      } else {
+        // No matching class: vendor for gold, folded into the split below
+        // like a normal sale (existing sell-value helper).
+        const sale = dataGearSellPrice(epic.tier, epic.rarity ?? 'Common');
+        goldTotal += sale;
+        this.addFloatingText(`💰 No need — ${epicName} vended +${sale}g`, monster.gx, monster.gy - 0.5, '#fde047', 13);
+        this.addLog('boss', `No delver needed ${epicName} — vended for ${sale}g split among the party.`);
+      }
+      gearDrop = null;
+    }
     if (gearDrop) {
       dropTotals = [...dropTotals, gearDrop];
       if (gearDrop.equipment?.rarity === 'Epic') {
@@ -2503,6 +2842,12 @@ export class GameSimulation {
   // --------------------------------------------------------------------------
 
   private gainExp(hunter: Hunter, amount: number) {
+    // Level cap 15 (dungeon gate): capped hunters bank nothing. Hunters
+    // already above the cap keep their stats and gain nothing either.
+    if (hunter.level >= HUNTER_LEVEL_CAP) {
+      hunter.exp = 0;
+      return;
+    }
     hunter.exp += amount;
     if (hunter.exp >= hunter.expToNext) {
       hunter.exp -= hunter.expToNext;
@@ -2572,13 +2917,16 @@ export class GameSimulation {
   }
 
   /**
-   * Map region: 0 = town/transit (gx<=39 && gy<=39, gates included) plus
+   * Map region: 4 = dungeon depths (west strip, checked FIRST so it wins
+   * over the overlapping reserves below),
+   * 0 = town/transit (gx<=39 && gy<=39, gates included) plus
    * the reserved expansion lands (northwest bands: town/transit-exempt,
    * no zone-fit pressure, no transit targeting),
    * 1 = forest (gx>39,gy<39), 2 = crypt (gx<39,gy>39), 3 = volcano
-   * (gx>39,gy>39). Region walls sit on row/col 39.
+   * (gx>39,gy>39). Region walls sit on row/col 39 (+ the west palisade).
    */
-  private zoneOf(gx: number, gy: number): 0 | 1 | 2 | 3 {
+  private zoneOf(gx: number, gy: number): 0 | 1 | 2 | 3 | 4 {
+    if (dungeonAt(gx, gy)) return 4;
     if (reserveAt(Math.floor(gx), Math.floor(gy)) !== null) return 0;
     if (gx <= 39 && gy <= 39) return 0;
     if (gx > 39 && gy < 39) return 1;
@@ -2760,7 +3108,9 @@ export class GameSimulation {
     if (s.forge > bestU) { best = 'forge'; bestU = s.forge; }
     if (s.lab > bestU) { best = 'lab'; bestU = s.lab; }
     // All done in town -> March out through the nearest gate!
+    // (portal lobby hook first: an idle max-level hunter gathers instead)
     if (bestU < 0.12) {
+      if (this.maybeEnterLobby(hunter)) return;
       this.leaveForHunt(hunter);
       return;
     }
@@ -3520,8 +3870,16 @@ export class GameSimulation {
     const fairInZone = candidates.filter(m => !this.isTooHardFor(m, hunter));
     if (fairInZone.length > 0) return nearestIn(fairInZone);
 
-    // Fallback to the best-matched fair fight anywhere (refuse suicide runs)
-    const anyFair = this.monsters.filter(m => m.hp > 0 && !this.isTooHardFor(m, hunter));
+    // Fallback to the best-matched fair fight anywhere (refuse suicide runs).
+    // Zone-4 dungeon mobs are excluded for hunters outside the vault — entry
+    // is teleport-only, so no one may route themselves at the sealed wall.
+    // Delvers already inside keep full access and prefer interior prey.
+    const inDungeon = this.zoneOf(hunter.gx, hunter.gy) === 4;
+    if (inDungeon) {
+      const inside = this.monsters.filter(m => m.zone === 4 && m.hp > 0 && !this.isTooHardFor(m, hunter));
+      if (inside.length > 0) return nearestIn(inside);
+    }
+    const anyFair = this.monsters.filter(m => m.hp > 0 && !this.isTooHardFor(m, hunter) && (inDungeon || m.zone !== 4));
     return anyFair.length > 0 ? nearestIn(anyFair) : null;
   }
 
@@ -3533,8 +3891,11 @@ export class GameSimulation {
   private findDesperateTarget(hunter: Hunter): Monster | null {
     let best: Monster | null = null;
     let bestScore = -Infinity;
+    const inDungeon = this.zoneOf(hunter.gx, hunter.gy) === 4;
     for (const m of this.monsters) {
       if (m.hp <= 0) continue;
+      // Teleport-only entry: outsiders never desperation-pick vault mobs.
+      if (m.zone === 4 && !inDungeon) continue;
       const estHit = m.atk - this.effectiveDef(hunter) * 0.65; // TTK tune: 0.5->0.65
       const hitsToDie = estHit <= 0 ? 999 : hunter.hp / estHit; // hits-to-die
       // Spread hunters across prey: discount already-claimed monsters so
@@ -3711,6 +4072,13 @@ export class GameSimulation {
       isPaused: this.isPaused,
       bossSpawnTimer: this.bossSpawnTimer,
       isBossActive: this.isBossActive,
+      dungeon: {
+        seed: this.dungeon.seed,
+        state: this.dungeon.state,
+        lockoutTimer: this.dungeon.lockoutTimer,
+        bossesDown: [...this.dungeon.bossesDown],
+        partyIds: [...(this.dungeon.partyIds ?? [])],
+      },
       materialStock: this.materialStock,
       auctionStock: this.auctionStock,
       auctionLifetimeListings: this.auctionLifetimeListings,
@@ -3753,7 +4121,7 @@ export class GameSimulation {
       const raw = window.localStorage.getItem(SAVE_KEY) ?? window.localStorage.getItem(LEGACY_SAVE_KEY);
       if (!raw) return null;
       const data = JSON.parse(raw);
-      if (!data || (data.version !== 1 && data.version !== 2 && data.version !== SAVE_VERSION)) return null;
+      if (!data || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== SAVE_VERSION)) return null;
       // Pre-shift (v1) saves store 0-39 coords: shift every persisted
       // coordinate +20/+20 on load. V2 saves load unshifted.
       const needsShift = data.version === 1;
@@ -3798,6 +4166,26 @@ export class GameSimulation {
       sim.isPaused = data.isPaused === true;
       sim.bossSpawnTimer = num(data.bossSpawnTimer, 90);
       sim.isBossActive = data.isBossActive === true;
+
+      // Dungeon instance (v4+; older saves migrate to dormant/unseeded).
+      // The portal lobby is runtime-only like parties: fresh sims start
+      // empty, so loads always clear it (seated waiters resume as plaza
+      // strollers below and the hub re-evaluates).
+      sim.lobby = [];
+      sim.dungeon = defaultDungeonInstance();
+      if (data.dungeon && typeof data.dungeon === 'object') {
+        const d = data.dungeon as Partial<DungeonInstance>;
+        sim.dungeon.seed = num(d.seed, 0);
+        sim.dungeon.state = (d.state === 'active' || d.state === 'cleared' || d.state === 'lockout')
+          ? d.state
+          : 'dormant';
+        sim.dungeon.lockoutTimer = Math.max(0, num(d.lockoutTimer, 0));
+        sim.dungeon.bossesDown = [0, 1, 2].map(i =>
+          Array.isArray(d.bossesDown) && d.bossesDown[i] === true) as [boolean, boolean, boolean];
+        sim.dungeon.partyIds = Array.isArray(d.partyIds)
+          ? (d.partyIds as unknown[]).filter((id): id is string => typeof id === 'string')
+          : [];
+      }
 
       // Town material stock (old saves without it migrate to zeros)
       sim.materialStock = GameSimulation.emptyStock();
@@ -3912,15 +4300,16 @@ export class GameSimulation {
         // Field parties are runtime-only: they reform live, so every load
         // dissolves them (parties Map itself is never snapshotted).
         h.partyId = null;
-        // Plaza LFP muster is transient too: old saves lack the cooldown,
-        // and waiting seekers resume as plaza strollers (hub re-evaluates).
+        // Plaza LFP muster + portal lobby are transient too: old saves lack
+        // the cooldown, and waiting seekers resume as plaza strollers (hub
+        // re-evaluates).
         if (typeof h.lfpCooldown !== 'number' || !Number.isFinite(h.lfpCooldown)) h.lfpCooldown = 0;
         // Paladin absorb shield is transient: old saves load unshielded.
         if (typeof h.shieldHp !== 'number' || !Number.isFinite(h.shieldHp)) h.shieldHp = 0;
         else h.shieldHp = 0;
         if (typeof h.shieldTimer !== 'number' || !Number.isFinite(h.shieldTimer)) h.shieldTimer = 0;
         else h.shieldTimer = 0;
-        if (h.state === 'LOOKING_FOR_PARTY') {
+        if (h.state === 'LOOKING_FOR_PARTY' || h.state === 'DUNGEON_LOBBY') {
           h.state = 'WANDERING_TOWN';
           h.stateTimer = 1.5;
           h.targetMonsterId = null;

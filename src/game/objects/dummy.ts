@@ -81,8 +81,8 @@ export function createTrainingDummyTexture(): Texture {
  * Academy station grid positions: south-row grid at (gx, gy),
  * deterministic order so the nth trainee (sorted by id) takes the nth dummy.
  */
-export function academyStationPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  return southRowSlots(gx, gy, capacity);
+export function academyStationPositions(gx: number, gy: number, w: number, h: number, capacity: number): { x: number; y: number }[] {
+  return southRowSlots(gx, gy, w, h, capacity);
 }
 
 /** Dummy grid position for a training hunter, or null with none. */
@@ -99,7 +99,7 @@ export function academyStationFor(sim: GameSimulation, hunter: Hunter): { x: num
     .sort();
   const idx = trainees.indexOf(hunter.id);
   if (idx < 0) return null;
-  const stations = academyStationPositions(academy.gx, academy.gy, capacity);
+  const stations = academyStationPositions(academy.gx, academy.gy, academy.width, academy.height, capacity);
   return idx < stations.length ? stations[idx] : null;
 }
 
@@ -128,7 +128,7 @@ export function renderAcademyYard(
       cache.delete(b.id);
     }
 
-    const stations = academyStationPositions(b.gx, b.gy, capacity);
+    const stations = academyStationPositions(b.gx, b.gy, b.width, b.height, capacity);
     const sprites: Sprite[] = [];
     for (const station of stations) {
       const p = gridToScreen(station.x, station.y);

@@ -18,6 +18,7 @@ export const ZONE_ROAM_BOUNDS: Record<ZoneId, { minGx: number; maxGx: number; mi
   1: { minGx: 42, maxGx: 54, minGy: 22, maxGy: 36 }, // Whispering Forest
   2: { minGx: 22, maxGx: 36, minGy: 42, maxGy: 54 }, // Gloomy Graveyard
   3: { minGx: 42, maxGx: 56, minGy: 42, maxGy: 56 }, // Volcanic Ruins
+  4: { minGx: 2, maxGx: 17, minGy: 22, maxGy: 57 }, // Dungeon Depths
 };
 
 /** Local save persistence key. */

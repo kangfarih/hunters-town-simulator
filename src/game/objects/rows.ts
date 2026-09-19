@@ -1,31 +1,50 @@
-// Shared yard layout: tile-center rows due south of a building facade,
-// filled west to east, 3 per row, each next row one block further south.
+// Shared yard layout: tile-center rows hugging the SOUTH side of a
+// building footprint, filled west to east, 3 per row, each next row one
+// block further south.
 //
-// Row 0 (sy48, a full tile clear of the 88px platform visual):
-//   W(0.5,2.5) C(1.5,1.5) E(2.5,0.5) — screen x -64/0/+64.
-// Row 1 (sy80): W(1.5,3.5) C(2.5,2.5) E(3.5,1.5). Row 2 (sy112): W/C.
-// All depth stays in front of the building; order is deterministic so the
-// nth stationed hunter (sorted by id) always takes the nth slot.
+// Slots derive from the footprint (gx, gy, width, height) — never from the
+// origin corner alone — so no slot ever lands inside the building's own
+// cells, whatever its size. Row 0 starts on the first tile row south of
+// the footprint (ty = gy + height); columns span the footprint width,
+// west to east. All depth stays in front of the facade, order is
+// deterministic (nth stationed hunter, sorted by id, takes nth slot).
 
-export const SOUTH_ROWS_3WIDE: ReadonlyArray<readonly [number, number]> = [
-  [0.5, 2.5],
-  [1.5, 1.5],
-  [2.5, 0.5],
-  [1.5, 3.5],
-  [2.5, 2.5],
-  [3.5, 1.5],
-  [2.5, 4.5],
-  [3.5, 3.5],
-];
+export const SOUTH_ROW_WIDTH = 3;
+const MAX_SLOTS = 8;
 
-/** Take the first n slots of the south-row grid at building (gx, gy). */
+/** West-most tile x of the row, so 3 slots center on the footprint. */
+function rowStartTx(gx: number, w: number): number {
+  return gx + Math.floor((w - SOUTH_ROW_WIDTH) / 2);
+}
+
+/** Take the first n slots of the south-row grid. */
 export function southRowSlots(
-  gx: number, gy: number, capacity: number
+  gx: number, gy: number, w: number, h: number, capacity: number
 ): { x: number; y: number }[] {
-  const n = Math.max(0, Math.min(Math.floor(capacity), SOUTH_ROWS_3WIDE.length));
+  const n = Math.max(0, Math.min(Math.floor(capacity), MAX_SLOTS));
+  const startTx = rowStartTx(gx, w);
   const out: { x: number; y: number }[] = [];
-  for (let i = 0; i < n; i++) out.push({ x: gx + SOUTH_ROWS_3WIDE[i][0], y: gy + SOUTH_ROWS_3WIDE[i][1] });
+  let r = 0;
+  while (out.length < n) {
+    for (let c = 0; c < SOUTH_ROW_WIDTH && out.length < n; c++) {
+      out.push({ x: startTx + c + 0.5, y: gy + h + r + 0.5 });
+    }
+    r++;
+  }
   return out;
+}
+
+/**
+ * Tavern table tile for the i-th chair pair: row 1 (one block south of
+ * the chair rows' start), middle column heading east — its own tile
+ * center, clear of both the platform and every chair slot at max
+ * tavern capacity. Diners sit north of it, facing south to the table.
+ */
+export function tavernTableSpot(
+  gx: number, gy: number, w: number, h: number, pairIndex: number
+): { x: number; y: number } {
+  const startTx = rowStartTx(gx, w);
+  return { x: startTx + 1 + pairIndex + 0.5, y: gy + h + 1 + 0.5 };
 }
 
 /** Snap an arbitrary point to the nearest tile center (x.5, y.5). */

@@ -79,8 +79,8 @@ export function createBedTexture(): Texture {
  * Clinic bed grid positions: south-row grid at (gx, gy), deterministic
  * order so the nth recovering hunter (sorted by id) takes the nth bed.
  */
-export function clinicBedPositions(gx: number, gy: number, capacity: number): { x: number; y: number }[] {
-  return southRowSlots(gx, gy, capacity);
+export function clinicBedPositions(gx: number, gy: number, w: number, h: number, capacity: number): { x: number; y: number }[] {
+  return southRowSlots(gx, gy, w, h, capacity);
 }
 
 /** Bed grid position for a recovering hunter, or null with no bed. */
@@ -97,7 +97,7 @@ export function bedFor(sim: GameSimulation, hunter: Hunter): { x: number; y: num
     .sort();
   const idx = patients.indexOf(hunter.id);
   if (idx < 0) return null;
-  const beds = clinicBedPositions(clinic.gx, clinic.gy, capacity);
+  const beds = clinicBedPositions(clinic.gx, clinic.gy, clinic.width, clinic.height, capacity);
   return idx < beds.length ? beds[idx] : null;
 }
 
@@ -126,7 +126,7 @@ export function renderClinicYard(
       cache.delete(b.id);
     }
 
-    const beds = clinicBedPositions(b.gx, b.gy, capacity);
+    const beds = clinicBedPositions(b.gx, b.gy, b.width, b.height, capacity);
     const sprites: Sprite[] = [];
     for (const bed of beds) {
       const p = gridToScreen(bed.x, bed.y);

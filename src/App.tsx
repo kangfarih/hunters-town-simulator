@@ -13,6 +13,7 @@ import { HunterRosterDrawer } from './components/HunterRosterDrawer';
 import { ChronicleLogDrawer } from './components/ChronicleLogDrawer';
 import { WorldConfigMenu } from './components/WorldConfigMenu';
 import { Hunter, Building } from './types';
+import { dungeonAt } from './game/dungeon';
 import { ZoomIn, ZoomOut, RotateCcw, Info, Settings } from 'lucide-react';
 
 export default function App() {
@@ -29,6 +30,11 @@ export default function App() {
   const [speedMultiplier, setSpeedMultiplier] = useState(simulation.speedMultiplier);
   const [isPaused, setIsPaused] = useState(simulation.isPaused);
   const [isBossActive, setIsBossActive] = useState(simulation.isBossActive);
+  const [dungeonSnap, setDungeonSnap] = useState({
+    state: simulation.dungeon.state,
+    bossesDown: simulation.dungeon.bossesDown.filter(Boolean).length,
+    lockoutTimer: simulation.dungeon.lockoutTimer,
+  });
 
   // Inspector targets
   const [selectedHunterId, setSelectedHunterId] = useState<string | null>(null);
@@ -46,6 +52,11 @@ export default function App() {
       setMaxHunters(simulation.maxHunters());
       setSummonCountdown(simulation.summonCountdown);
       setIsBossActive(simulation.isBossActive);
+      setDungeonSnap({
+        state: simulation.dungeon.state,
+        bossesDown: simulation.dungeon.bossesDown.filter(Boolean).length,
+        lockoutTimer: simulation.dungeon.lockoutTimer,
+      });
     }, 150);
 
     return () => clearInterval(interval);
@@ -181,6 +192,20 @@ export default function App() {
     ? simulation.hunters.find(h => h.id === selectedHunterId) || null 
     : null;
 
+  // Hunters currently inside the dungeon vault: tracked delvers plus anyone
+  // physically standing in the depths (no new tracking — both already exist).
+  const dungeonMemberIds = useMemo(
+    () => new Set(simulation.dungeon.partyIds ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dungeonSnap]
+  );
+  const isInDungeon = (h: Hunter) => dungeonMemberIds.has(h.id) || dungeonAt(h.gx, h.gy);
+  const dungeonMembers = useMemo(
+    () => simulation.hunters.filter(isInDungeon).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dungeonSnap, hunterCount]
+  );
+
   const currentBuilding = selectedBuildingId 
     ? simulation.buildings.find(b => b.id === selectedBuildingId) || null 
     : null;
@@ -210,6 +235,10 @@ export default function App() {
         onRushSummon={handleRushSummon}
         onJumpCamera={handleJumpCamera}
         isBossActive={isBossActive}
+        dungeonState={dungeonSnap.state}
+        dungeonBossesDown={dungeonSnap.bossesDown}
+        dungeonLockoutSecs={Math.ceil(dungeonSnap.lockoutTimer)}
+        dungeonMembers={dungeonMembers}
       />
 
       {/* 3. Hero Character Sheet Inspector */}
@@ -221,6 +250,7 @@ export default function App() {
           onToggleFollow={handleToggleFollow}
           partyMembers={currentHunter.partyId ? simulation.partyMembers(currentHunter).filter(h => h.id !== currentHunter.id) : []}
           isPartyLeader={simulation.isPartyLeader(currentHunter)}
+          inDungeon={isInDungeon(currentHunter)}
         />
       )}
 
@@ -246,6 +276,7 @@ export default function App() {
         selectedHunterId={selectedHunterId}
         onSelectHunter={handleSelectHunter}
         partyLeaderIds={new Set([...simulation.parties.values()].map(p => p.leaderId))}
+        dungeonMemberIds={dungeonMemberIds}
       />
 
       {/* 6. Live Town Chronicle / Event Log (Bottom Right) */}
@@ -338,6 +369,11 @@ export default function App() {
               <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
                 <strong className="text-purple-300 block mb-0.5">4. Time Acceleration:</strong>
                 Switch simulation speed between 1x, 2x, and 4x or pause anytime from the top bar. Progress auto-saves locally every few seconds — open World Config (gear icon) for difficulty, hunter survivability stats, and world reset.
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
+                <strong className="text-amber-300 block mb-0.5">5. Vault Dungeon (Endgame):</strong>
+                Lv.15 hunters with nothing better to do gather at the violet town portal (🌀 Waiting at dungeon portal): 5 chairs — 1 tank (Paladin, or Berserker as melee off-tank), 1 healer (Cleric), 3 open to any class. When all five sit, the party (led by the highest level) teleports straight into the sealed Vault (🗝️) — the old crypt walk-in gate is walled shut. Three bosses guard epic loot, need-rolled among the delvers — and the Vault locks for 5 minutes after a clear or a wipe. Parties that never fill wait 90s, then hunt solo.
               </div>
             </div>
 

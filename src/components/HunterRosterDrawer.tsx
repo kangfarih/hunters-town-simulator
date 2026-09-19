@@ -2,19 +2,22 @@ import React from 'react';
 import { Users, ChevronUp, ChevronDown } from 'lucide-react';
 import { Hunter } from '../types';
 import { partyColor } from '../game/simulation';
+import { dungeonAt } from '../game/dungeon';
 
 interface HunterRosterDrawerProps {
   hunters: Hunter[];
   selectedHunterId: string | null;
   onSelectHunter: (hunter: Hunter) => void;
   partyLeaderIds?: Set<string>;
+  dungeonMemberIds?: Set<string>;
 }
 
 export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
   hunters,
   selectedHunterId,
   onSelectHunter,
-  partyLeaderIds
+  partyLeaderIds,
+  dungeonMemberIds
 }) => {
   const [isOpen, setIsOpen] = React.useState(true);
 
@@ -25,6 +28,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
       case 'FIGHTING': return { text: '⚔️ Slaying', color: 'text-red-400' };
       case 'HUNTING': return { text: '🌲 Hunting', color: 'text-emerald-400' };
       case 'LOOKING_FOR_PARTY': return { text: '🔍 Seeking Party', color: 'text-cyan-300' };
+      case 'DUNGEON_LOBBY': return { text: '🌀 Dungeon Lobby', color: 'text-violet-300' };
       case 'SELLING_LOOT': return { text: '💰 Selling', color: 'text-yellow-400' };
       case 'UPGRADING_GEAR': return { text: '🔨 Forging', color: 'text-blue-400' };
       case 'LEARNING_SKILL': return { text: '📜 Training', color: 'text-purple-400' };
@@ -83,6 +87,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
           {hunters.map(hunter => {
             const isSelected = selectedHunterId === hunter.id;
             const action = getActionBadge(hunter.state);
+            const inDungeon = (dungeonMemberIds?.has(hunter.id) ?? false) || dungeonAt(hunter.gx, hunter.gy);
             const hpRatio = Math.max(0, Math.min(1, hunter.hp / (hunter.maxHp + hunter.armor.hpBonus + hunter.accessory.hpBonus)));
             const moodRatio = Math.max(0, Math.min(1, (hunter.mood ?? 100) / 100));
 
@@ -103,8 +108,13 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1">
                       <span className="text-xs font-bold text-slate-200 truncate" title={hunter.name}>
+                        {inDungeon && (
+                          <span className="mr-0.5" title="Inside the dungeon vault">🗝️</span>
+                        )}
                         {hunter.state === 'LOOKING_FOR_PARTY' ? (
                           <span className="mr-0.5" title="Looking for party">🔍 </span>
+                        ) : hunter.state === 'DUNGEON_LOBBY' ? (
+                          <span className="mr-0.5" title="Waiting at dungeon portal">🌀 </span>
                         ) : partyLeaderIds?.has(hunter.id) ? (
                           <span className="text-amber-400 mr-0.5" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="Party leader">♛ </span>
                         ) : hunter.partyId ? (
