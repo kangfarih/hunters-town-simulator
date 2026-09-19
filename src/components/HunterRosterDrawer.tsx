@@ -98,7 +98,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <span className="text-lg leading-none text-white">
-                    {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : '⚕️'}
+                    {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : hunter.charClass === 'Bard' ? '🎵' : '⚕️'}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1">

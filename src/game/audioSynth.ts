@@ -81,6 +81,17 @@ class AudioSynth {
     });
   }
 
+  // 5c. Bard Lute: three quick bright plucks (ballad/encore)
+  public playLute() {
+    if (this.isMuted) return;
+    const notes = [523.25, 659.25, 783.99];
+    notes.forEach((freq, idx) => {
+      setTimeout(() => {
+        this.playTone(freq, freq * 1.01, 0.14, 'triangle', 0.14);
+      }, idx * 70);
+    });
+  }
+
   // 5. Holy Smite
   public playSmite() {
     if (this.isMuted) return;

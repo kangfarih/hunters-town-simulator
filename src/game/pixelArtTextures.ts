@@ -214,6 +214,11 @@ export function createHunterFrame(
     mainColor = '#e2e8f0';
     trimColor = '#eab308';
     capeColor = '#0284c7';
+  } else if (charClass === 'Bard') {
+    // Bard: teal-purple minstrel jacket with gold trim
+    mainColor = '#14b8a6';
+    trimColor = '#5b21b6';
+    capeColor = '#0f766e';
   } else {
     // Cleric: white-gold robe (distinct from Paladin's silver-blue)
     mainColor = '#f8fafc';
@@ -287,6 +292,15 @@ export function createHunterFrame(
     ctx.fillRect(cx + 4, baseY - 18, 2, 6);
     ctx.fillStyle = '#d4a017';
     ctx.fillRect(cx - 5, baseY - 18, 10, 1);
+  } else if (charClass === 'Bard') {
+    // Feathered minstrel cap: purple cap + teal feather
+    ctx.fillStyle = '#5b21b6';
+    ctx.fillRect(cx - 5, baseY - 21, 10, 4);
+    ctx.fillRect(cx - 3, baseY - 24, 5, 4);
+    ctx.fillStyle = '#2dd4bf';
+    ctx.fillRect(cx + 3, baseY - 26, 2, 6);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(cx - 1, baseY - 21, 2, 1);
   } else {
     // Paladin winged crest
     ctx.fillStyle = '#f1f5f9';
@@ -344,6 +358,24 @@ export function createHunterFrame(
     ctx.fill();
     ctx.fillStyle = '#f0fdf4';
     ctx.fillRect(3, -15, 2, 2);
+  } else if (charClass === 'Bard') {
+    // Lute: wooden body + neck + strings
+    ctx.fillStyle = '#b45309';
+    ctx.beginPath();
+    ctx.arc(4, 2, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(3, -14, 3, 12);
+    ctx.strokeStyle = '#fef3c7';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(3, -14);
+    ctx.lineTo(3, 4);
+    ctx.moveTo(5, -14);
+    ctx.lineTo(5, 4);
+    ctx.stroke();
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(2, -16, 5, 2);
   } else {
     // Paladin: Shield on left, Warhammer on right
     ctx.fillStyle = '#94a3b8';
@@ -1246,6 +1278,25 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.fillStyle = '#d4a017';
     ctx.fillRect(center + 2, center - 12, 2, 2);
     ctx.fillRect(center - 1, center - 18, 2, 2);
+  } else if (type === 'ballad' || type === 'encore') {
+    // Bard music burst: teal-gold notes on a soft glow
+    const grad = ctx.createRadialGradient(center, center, 2, center, center, 24);
+    grad.addColorStop(0, 'rgba(45, 212, 191, 0.9)');
+    grad.addColorStop(0.5, 'rgba(251, 191, 36, 0.55)');
+    grad.addColorStop(1, 'rgba(45, 212, 191, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(center, center, 24, 0, Math.PI * 2);
+    ctx.fill();
+    // Three note heads + stems
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(center - 12, center + 2, 6, 5);
+    ctx.fillRect(center - 1, center - 8, 6, 5);
+    ctx.fillRect(center + 8, center + 6, 5, 4);
+    ctx.fillStyle = '#2dd4bf';
+    ctx.fillRect(center - 8, center - 10, 2, 12);
+    ctx.fillRect(center + 3, center - 18, 2, 10);
+    ctx.fillRect(center + 11, center - 4, 2, 10);
   } else if (type === 'levelup') {
     // Level-up burst: gold pillar + expanding ring + rising sparks
     ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';

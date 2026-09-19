@@ -209,7 +209,7 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
                 <div key={h.id} className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm">
-                      {h.charClass === 'Berserker' ? '⚔️' : h.charClass === 'Ranger' ? '🏹' : h.charClass === 'Sorcerer' ? '🔮' : h.charClass === 'Paladin' ? '🛡️' : '⚕️'}
+                      {h.charClass === 'Berserker' ? '⚔️' : h.charClass === 'Ranger' ? '🏹' : h.charClass === 'Sorcerer' ? '🔮' : h.charClass === 'Paladin' ? '🛡️' : h.charClass === 'Bard' ? '🎵' : '⚕️'}
                     </span>
                     <div>
                       <div className="font-bold text-slate-200 text-xs">{h.name}</div>

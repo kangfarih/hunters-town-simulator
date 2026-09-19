@@ -179,7 +179,7 @@ export class PixiRenderer {
     });
 
     // Pre-cache VFX textures
-    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'heal', 'impact', 'levelup'].forEach(v => {
+    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'heal', 'ballad', 'encore', 'impact', 'levelup'].forEach(v => {
       this.vfxTextures.set(v, createSkillVfxTexture(v));
     });
   }
@@ -799,7 +799,7 @@ export class PixiRenderer {
       // Determine action for frame lookup
       let action: 'idle' | 'walk' | 'attack' | 'cast' = 'idle';
       if (!spot && hunter.isAttacking) {
-        action = (hunter.charClass === 'Sorcerer' || hunter.charClass === 'Cleric') ? 'cast' : 'attack';
+        action = (hunter.charClass === 'Sorcerer' || hunter.charClass === 'Cleric' || hunter.charClass === 'Bard') ? 'cast' : 'attack';
       } else if (!spot && (hunter.state === 'HUNTING' || hunter.state === 'TRAVELING_TO_HUNT' || hunter.state === 'RETURNING_TO_TOWN' || hunter.state === 'SPAWNING' || hunter.state === 'REGISTERING')) {
         action = 'walk';
       }
@@ -1005,6 +1005,7 @@ export class PixiRenderer {
       const pacing: Record<string, number> = {
         multishot: 0.65, slash: 0.7, impact: 0.8, heal: 1.0,
         meteor: 1.0, whirlwind: 1.0, smite: 1.15, levelup: 1.2,
+        ballad: 0.9, encore: 1.0,
       };
       const visualDuration = vfx.duration * (pacing[vfx.type] ?? 1.0);
       const progress = Math.min(1, vfx.elapsed / visualDuration);
@@ -1055,6 +1056,13 @@ export class PixiRenderer {
         sprite.y = targetScreen.y - 14 - progress * 10;
         const s = 0.6 + pop * 0.8;
         sprite.scale.set(s);
+      } else if (vfx.type === 'ballad' || vfx.type === 'encore') {
+        // Bard music blooms on the caster and drifts upward with a shimmer
+        sprite.x = startScreen.x;
+        sprite.y = startScreen.y - 16 - progress * 12;
+        const s = 0.7 + pop * 0.7;
+        sprite.scale.set(s);
+        sprite.alpha = fade * (0.8 + 0.2 * Math.sin(progress * 14));
       } else if (vfx.type === 'levelup') {
         // Level-up pillar erupts from the hunter and rises, ring expanding
         sprite.x = startScreen.x;

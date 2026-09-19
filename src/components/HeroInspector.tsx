@@ -63,6 +63,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
   const moodPercent = Math.max(0, Math.min(100, hunter.mood ?? 100));
   const hasMorale = (hunter.moraleBoostTimer ?? 0) > 0 && (hunter.moraleBoost ?? 0) > 0;
   const hasTonic = (hunter.tonicBoostTimer ?? 0) > 0 && (hunter.tonicBoost ?? 0) > 0;
+  const hasEncore = (hunter.encoreTimer ?? 0) > 0 && (hunter.encoreBoost ?? 0) > 0;
+  const hasGoldFever = (hunter.goldFeverTimer ?? 0) > 0;
 
   return (
     <div className="absolute right-3 top-20 bottom-3 w-84 max-w-[calc(100vw-24px)] z-20 flex flex-col bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl shadow-black/60 overflow-hidden text-slate-200 pointer-events-auto font-sans">
@@ -79,7 +81,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
           {/* Class Avatar Frame */}
           <div className={`w-14 h-14 rounded-xl border-2 ${frameStyle.border} ${frameStyle.bg} shadow-lg ${frameStyle.glow} flex flex-col items-center justify-center p-1 relative`}>
             <span className="text-xl">
-              {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : '⚕️'}
+              {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : hunter.charClass === 'Bard' ? '🎵' : '⚕️'}
             </span>
             <span className="text-[9px] font-black tracking-wider uppercase text-amber-300 font-mono">
               {hunter.charClass}
@@ -111,6 +113,16 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
               <span className="text-amber-300">💰 {hunter.gold}g</span>
               <span>💀 {hunter.killCount} Kills</span>
               <span className="text-emerald-300">🧪 {hunter.elixirs ?? 0} 🥤 {hunter.tonics ?? 0}</span>
+              {hasEncore && (
+                <span className="text-teal-300 font-bold">
+                  🎵+{Math.round((hunter.encoreBoost ?? 0) * 100)}% {Math.ceil(hunter.encoreTimer ?? 0)}s
+                </span>
+              )}
+              {hasGoldFever && (
+                <span className="text-yellow-300 font-bold">
+                  💰Fever {Math.ceil(hunter.goldFeverTimer ?? 0)}s
+                </span>
+              )}
               {hasTonic && (
                 <span className="text-orange-300 font-bold">
                   🥤+20% Tonic {Math.ceil(hunter.tonicBoostTimer ?? 0)}s
