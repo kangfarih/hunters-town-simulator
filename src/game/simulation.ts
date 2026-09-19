@@ -10,7 +10,7 @@ import { soundFx } from './audioSynth';
 // Dungeon endgame (phases 1+2): map/instance data lives in ./dungeon;
 // simulation owns entry checks, spawning, and the lockout tick.
 import {
-  dungeonAt, generateTrashPacks, BOSS_DEFS, BOSS_ARENAS,
+  dungeonAt, BOSS_DEFS, BOSS_ARENAS,
   defaultDungeonInstance, needRoll, dungeonBossIndex,
   DUNGEON_LOCKOUT_SECONDS, DUNGEON_EJECT,
   DUNGEON_CLEAR_BONUS_GOLD,
@@ -1043,18 +1043,21 @@ export class GameSimulation {
     if (this.dungeon.state !== 'dormant') {
       return `The dungeon gate is ${this.dungeon.state} — entry refused.`;
     }
-    // Admit: activate, seed, snapshot the delvers, and stock the depths.
+    // Admit: activate, seed, snapshot the delvers, and stock the bosses.
+    // No trash packs — the dungeon is 3 bosses holding their arenas.
     this.dungeon.seed = Date.now();
     this.dungeon.state = 'active';
     this.dungeon.bossesDown = [false, false, false];
     this.dungeon.partyIds = live.map(h => h.id);
-    for (const pack of generateTrashPacks(this.dungeon.seed)) {
-      this.spawnMonster(4, pack.type, false, pack);
-    }
     for (const def of BOSS_DEFS) {
       const boss = this.spawnMonster(4, def.type, true, BOSS_ARENAS[def.arena]);
       boss.name = def.name;
       boss.level = def.level;
+      // Pin the boss to its arena (white floor): roam targets stay inside
+      // this box, so it never wanders the lanes.
+      boss.anchorGx = BOSS_ARENAS[def.arena].x;
+      boss.anchorGy = BOSS_ARENAS[def.arena].y;
+      boss.anchorRadius = 2.5;
     }
     const names = live.map(h => h.name.split(' ')[0]).join(', ');
     this.addLog('boss', `${names} descended into the dungeon depths!`);
@@ -3574,6 +3577,16 @@ export class GameSimulation {
       }
 
       const dist = gridDistance(monster.gx, monster.gy, hunter.gx, hunter.gy);
+      // Anchor leash: dungeon bosses never leave their arena
+      if (monster.anchorGx != null && monster.anchorGy != null && monster.anchorRadius != null) {
+        if (gridDistance(monster.gx, monster.gy, monster.anchorGx, monster.anchorGy) > monster.anchorRadius + 2) {
+          monster.state = 'IDLE';
+          monster.targetHunterId = null;
+          monster.tauntHunterId = null;
+          monster.tauntTimer = 0;
+          return;
+        }
+      }
       // Leash: don't chase prey across the region walls back into town
       if (dist > 9) {
         monster.state = 'IDLE';
@@ -3626,9 +3639,13 @@ export class GameSimulation {
     }
   }
 
-  /** Idle wandering: pause, pick a nearby point in the home zone, stroll to it. */
+  /** Idle wandering: pause, pick a nearby point in the home zone, stroll to it.
+   *  Dungeon bosses use their anchor box (arena) instead of zone bounds. */
   private updateMonsterRoam(monster: Monster, dt: number) {
-    const bounds = ZONE_ROAM_BOUNDS[monster.zone];
+    const hasAnchor = monster.anchorRadius != null;
+    const bounds = hasAnchor
+      ? { minGx: monster.anchorGx! - monster.anchorRadius!, maxGx: monster.anchorGx! + monster.anchorRadius!, minGy: monster.anchorGy! - monster.anchorRadius!, maxGy: monster.anchorGy! + monster.anchorRadius! }
+      : ZONE_ROAM_BOUNDS[monster.zone];
     // Bosses lumber rather than skitter
     const roamSpeed = (monster.isBoss ? 0.008 : 0.018) * 60 * dt;
 
@@ -4286,6 +4303,12 @@ export class GameSimulation {
         // Paladin tank kit is runtime-only: old saves load untaunted.
         m.tauntHunterId = null;
         m.tauntTimer = 0;
+        // Anchor defaults for dungeon bosses (migration)
+        if (m.zone === 4 && m.isBoss && m.anchorGx == null) {
+          m.anchorGx = m.gx;
+          m.anchorGy = m.gy;
+          m.anchorRadius = 2.5;
+        }
         const bounds = ZONE_ROAM_BOUNDS[m.zone as 1 | 2 | 3];
         if (bounds) {
           m.gx = Math.min(bounds.maxGx, Math.max(bounds.minGx, num(m.gx, bounds.minGx)));

@@ -4,7 +4,7 @@ export interface Monster {
   id: string;
   name: string;
   zone: 1 | 2 | 3 | 4;
-  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_lich' | 'vault_husk' | 'rune_warden' | 'vault_lord' | 'boss_warden' | 'boss_hoarder' | 'boss_primus';
+  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_lich' | 'boss_warden' | 'boss_hoarder' | 'boss_primus';
   level: number;
   hp: number;
   maxHp: number;
@@ -24,6 +24,13 @@ export interface Monster {
   targetHunterId: string | null;
   attackCooldown: number;
   roamPauseTimer: number; // idle seconds before picking the next roam target
+
+  // Optional roam anchor: when set, updateMonsterRoam picks stroll
+  // destinations inside this box instead of the zone roam bounds.
+  // Dungeon bosses use it to hold their arena (white floor).
+  anchorGx?: number;
+  anchorGy?: number;
+  anchorRadius?: number;
 
   // Paladin taunt lock (transient, runtime-only): forces targetHunterId to the
   // taunting Paladin until tauntTimer (sim-seconds) expires. Cleared on leash,

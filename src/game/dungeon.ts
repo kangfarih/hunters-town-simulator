@@ -1,5 +1,6 @@
-// Dungeon endgame (phases 1-4): map rect, boss arenas, seeded trash gen,
-// boss defs, epic need-rolls, and instance-state helpers.
+// Dungeon endgame (phases 1-4): map rect, boss arenas, boss defs,
+// epic need-rolls, and instance-state helpers.
+// 3 bosses only — no trash packs. Each boss holds its arena (white floor).
 //
 // Pure module: no simulation state, no rendering. Simulation owns behavior
 // (entry checks, spawning, tick); renderers + pathfinding read these
@@ -85,7 +86,10 @@ export function lobbySeatPositions(): { x: number; y: number }[] {
   return southRowSlots(DUNGEON_PORTAL.x - 1, DUNGEON_PORTAL.y, 3, 1, LOBBY_SEATS.length);
 }
 
-/** Deterministic PRNG for seeded trash placement (mulberry32). */
+/**
+ * Deterministic PRNG for seeded trash placement (mulberry32).
+ * Kept for potential future use; dungeon currently has no trash packs.
+ */
 function mulberry32(seed: number): () => number {
   let a = (seed >>> 0) || 1;
   return () => {
@@ -96,9 +100,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Dungeon trash types (phase 3 kits). */
-export type DungeonTrashType = Extract<MonsterType, 'vault_husk' | 'rune_warden' | 'vault_lord'>;
-
 /** Dungeon boss types, in bossesDown order (warden 0, hoarder 1, primus 2). */
 export const DUNGEON_BOSS_TYPES = ['boss_warden', 'boss_hoarder', 'boss_primus'] as const;
 export type DungeonBossType = (typeof DUNGEON_BOSS_TYPES)[number];
@@ -106,39 +107,6 @@ export type DungeonBossType = (typeof DUNGEON_BOSS_TYPES)[number];
 /** Index into bossesDown for a dungeon boss type, or -1 when not one. */
 export function dungeonBossIndex(type: MonsterType): number {
   return (DUNGEON_BOSS_TYPES as readonly string[]).indexOf(type);
-}
-
-export interface TrashPackSpawn {
-  x: number;
-  y: number;
-  type: DungeonTrashType;
-}
-
-/**
- * Seeded trash layout: ~12 packs of 2-3 stand-ins along the x 6-14 lanes,
- * keeping a 3-radius clear around every boss arena.
- */
-export function generateTrashPacks(seed: number): TrashPackSpawn[] {
-  const rand = mulberry32(seed);
-  const packs: TrashPackSpawn[] = [];
-  for (let p = 0; p < 12; p++) {
-    const laneX = 6 + Math.floor(rand() * 9); // lanes x 6..14
-    let cy = 22 + Math.floor(rand() * 35);    // y 22..56
-    for (let tries = 0; tries < 8; tries++) {
-      const clear = BOSS_ARENAS.every(a => Math.hypot(laneX - a.x, cy - a.y) > 3);
-      if (clear) break;
-      cy = 22 + Math.floor(rand() * 35);
-      if (tries === 7) cy = 24; // deterministic fallback, clear of arena 1
-    }
-    const n = 2 + Math.floor(rand() * 2); // 2-3 per pack
-    for (let i = 0; i < n; i++) {
-      const x = Math.min(17, Math.max(2, laneX + Math.floor(rand() * 3) - 1));
-      const y = Math.min(57, Math.max(22, cy + Math.floor(rand() * 3) - 1));
-      const r = rand();
-      packs.push({ x, y, type: r < 0.5 ? 'vault_husk' : (r < 0.8 ? 'rune_warden' : 'vault_lord') });
-    }
-  }
-  return packs;
 }
 
 export interface BossDef {
