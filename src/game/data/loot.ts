@@ -31,6 +31,37 @@ export function gearSellPrice(tier: number, rarity: EquipmentRarity): number {
 }
 
 // --------------------------------------------------------------------------
+// Auction House v1 (Merchant Bazaar extension): instant buyout pool for
+// green/blue (Uncommon/Rare) weapon/armor only. Sellers get an instant
+// buyout; buyers pay a 25% markup + tier fee. Stock is FIFO-capped.
+// --------------------------------------------------------------------------
+
+export const AUCTION_STOCK_CAP = 24;
+export const AUCTION_MAX_COPIES_PER_ITEM = 3;
+
+export function isAuctionable(equipment: { rarity?: EquipmentRarity | null; type?: string | null } | null | undefined): boolean {
+  if (!equipment) return false;
+  const rarity = equipment.rarity ?? 'Common';
+  const type = equipment.type;
+  return (rarity === 'Uncommon' || rarity === 'Rare') && (type === 'weapon' || type === 'armor');
+}
+
+/** Instant buyout paid to the seller: sell value scaled by bazaar level (+10%/level). */
+export function auctionBuyoutPrice(tier: number, rarity: EquipmentRarity, bazaarLevel: number): number {
+  return Math.round(gearSellPrice(tier, rarity) * (1 + bazaarLevel * 0.1));
+}
+
+/** Buyer price: 25% markup over the buyout plus a flat tier fee. */
+export function auctionBuyerPrice(buyout: number, tier: number): number {
+  return Math.round(buyout * 1.25 + tier * 10);
+}
+
+/** Unique-item grouping key: type + tier + rarity + base name (no rarity prefix). */
+export function auctionItemKey(eq: { type: string; tier: number; rarity?: EquipmentRarity | null; name: string }): string {
+  return `${eq.type}|${eq.tier}|${eq.rarity ?? 'Common'}|${eq.name}`;
+}
+
+// --------------------------------------------------------------------------
 // Rarity colors: Common white, Uncommon green, Rare blue, Epic purple.
 // Single source of truth for UI text/border + canvas floating-text hex.
 // --------------------------------------------------------------------------

@@ -233,6 +233,10 @@ export default function App() {
           isFollowing={isFollowing}
           onToggleFollow={handleToggleFollow}
           materialStock={simulation.materialStock}
+          auctionStock={simulation.auctionStock}
+          auctionLifetimeListings={simulation.auctionLifetimeListings}
+          auctionLifetimeSales={simulation.auctionLifetimeSales}
+          auctionLifetimeFees={simulation.auctionLifetimeFees}
         />
       )}
 

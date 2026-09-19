@@ -42,6 +42,12 @@ import {
   RARITY_STAT_MULT as DATA_RARITY_STAT_MULT,
   GEAR_SELL_MULT as DATA_GEAR_SELL_MULT,
   gearSellPrice as dataGearSellPrice,
+  AUCTION_STOCK_CAP as DATA_AUCTION_STOCK_CAP,
+  AUCTION_MAX_COPIES_PER_ITEM as DATA_AUCTION_MAX_COPIES_PER_ITEM,
+  auctionItemKey as dataAuctionItemKey,
+  isAuctionable as dataIsAuctionable,
+  auctionBuyoutPrice as dataAuctionBuyoutPrice,
+  auctionBuyerPrice as dataAuctionBuyerPrice,
   RARITY_HEX as DATA_RARITY_HEX,
   RARITY_TEXT_CLASS as DATA_RARITY_TEXT_CLASS,
   RARITY_BORDER_CLASS as DATA_RARITY_BORDER_CLASS,
@@ -103,6 +109,12 @@ export const baseStatsFor = dataBaseStatsFor;
 export const RARITY_STAT_MULT = DATA_RARITY_STAT_MULT;
 export const GEAR_SELL_MULT = DATA_GEAR_SELL_MULT;
 export const gearSellPrice = dataGearSellPrice;
+export const AUCTION_STOCK_CAP = DATA_AUCTION_STOCK_CAP;
+export const AUCTION_MAX_COPIES_PER_ITEM = DATA_AUCTION_MAX_COPIES_PER_ITEM;
+export const auctionItemKey = dataAuctionItemKey;
+export const isAuctionable = dataIsAuctionable;
+export const auctionBuyoutPrice = dataAuctionBuyoutPrice;
+export const auctionBuyerPrice = dataAuctionBuyerPrice;
 export const RARITY_HEX = DATA_RARITY_HEX;
 export const RARITY_TEXT_CLASS = DATA_RARITY_TEXT_CLASS;
 export const RARITY_BORDER_CLASS = DATA_RARITY_BORDER_CLASS;
@@ -139,6 +151,13 @@ export class GameSimulation {
 
   // Town material stock: loot sold at the Trading Post becomes forge/brew stock.
   public materialStock: MaterialStock = GameSimulation.emptyStock();
+
+  // Auction House v1 (Merchant Bazaar extension): instant-buyout pool of
+  // green/blue weapon/armor listed at the Trading Post. FIFO-capped.
+  public auctionStock: Equipment[] = [];
+  public auctionLifetimeListings: number = 0;
+  public auctionLifetimeSales: number = 0;
+  public auctionLifetimeFees: number = 0;
 
   public townGold: number = 250;
   public totalMonstersDefeated: number = 0;
@@ -2242,6 +2261,69 @@ export class GameSimulation {
     return true;
   }
 
+  /**
+   * Auction House buyer: weapon-first cheapest affordable upgrade from the
+   * pool. Prices recompute from item tier/rarity + bazaar level so the fee
+   * stays consistent; the fee funds townGold. Old gear trades in (Common)
+   * or relists when auctionable. Returns true when a purchase happened.
+   */
+  public tryBuyAuctionUpgrade(hunter: Hunter, bazaar: Building): boolean {
+    if (this.auctionStock.length === 0) return false;
+    for (const slot of ['weapon', 'armor'] as const) {
+      const current = this.equippedGearFor(hunter, slot);
+      const currentScore = this.gearScore(current);
+      let bestIdx = -1;
+      let bestPrice = Infinity;
+      let bestBuyout = 0;
+      for (let i = 0; i < this.auctionStock.length; i++) {
+        const item = this.auctionStock[i];
+        if (item.type !== slot) continue;
+        if (item.requiredClass && item.requiredClass !== hunter.charClass) continue;
+        if (this.gearScore(item) <= currentScore) continue;
+        const buyout = dataAuctionBuyoutPrice(item.tier, item.rarity ?? 'Common', bazaar.level);
+        const price = dataAuctionBuyerPrice(buyout, item.tier);
+        if (hunter.gold < price) continue;
+        if (price < bestPrice) {
+          bestPrice = price;
+          bestBuyout = buyout;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx < 0) continue;
+      const [bought] = this.auctionStock.splice(bestIdx, 1);
+      if (!bought) continue;
+      hunter.gold -= bestPrice;
+      // Old gear: Common vendors at half; auctionable green/blue relists.
+      const old = { ...current };
+      if ((old.rarity ?? 'Common') === 'Common') {
+        const tradeIn = Math.floor(dataGearSellPrice(old.tier, old.rarity ?? 'Common') / 2);
+        if (tradeIn > 0) hunter.gold += tradeIn;
+      } else if (dataIsAuctionable(old)) {
+        const copies = this.auctionStock.filter(s => dataAuctionItemKey(s) === dataAuctionItemKey(old)).length;
+        if (copies < DATA_AUCTION_MAX_COPIES_PER_ITEM && this.auctionStock.length < DATA_AUCTION_STOCK_CAP) {
+          this.auctionStock.push(old);
+        } else {
+          const tradeIn = Math.floor(dataGearSellPrice(old.tier, old.rarity ?? 'Common') / 2);
+          if (tradeIn > 0) hunter.gold += tradeIn;
+        }
+      }
+      if (slot === 'weapon') hunter.weapon = { ...bought };
+      else hunter.armor = { ...bought };
+      hunter.hp = Math.min(this.effectiveMaxHp(hunter), hunter.hp + Math.max(0, bought.hpBonus - current.hpBonus));
+      const fee = bestPrice - bestBuyout;
+      this.auctionLifetimeSales++;
+      this.auctionLifetimeFees += fee;
+      this.townGold += fee;
+      this.recordStoreTransaction(bazaar, 20, bestPrice);
+      soundFx.playCoin();
+      const displayName = dataEquipmentDisplayName(bought.rarity, bought.name);
+      this.addFloatingText(`💎 Bought ${displayName} for ${bestPrice}g`, bazaar.doorGx, bazaar.doorGy - 0.5, '#60a5fa', 13);
+      this.addLog('trade', `${hunter.name} bought ${displayName} on Auction House for ${bestPrice}g`, hunter.name);
+      return true;
+    }
+    return false;
+  }
+
   private handleMonsterDefeat(hunter: Hunter, monster: Monster) {    this.totalMonstersDefeated++;
     hunter.killCount++;
     // Nursery kills don't feed the auto-director: zone-1 spawns only feel
@@ -2735,20 +2817,49 @@ export class GameSimulation {
       switch (completedState) {
         case 'SELLING_LOOT': {
           if (serviceBuilding.type !== 'TRADING_POST') break;
-          // 1. Hero Auto Sells Loot to NPC
-          let totalSaleGold = 0;
-          hunter.inventory.forEach(item => {
-            totalSaleGold += item.value * item.count;
-          });
+          // 1. Hero Auto Sells Loot to NPC — auctionable green/blue
+          // weapon/armor lists on the Auction House (instant buyout) instead.
+          let auctionGold = 0;
+          let normalGold = 0;
+          let overflowGold = 0;
+          const normalItems = hunter.inventory.filter(item => !(item.equipment && dataIsAuctionable(item.equipment)));
+          for (const item of hunter.inventory) {
+            const eq = item.equipment;
+            if (!eq || !dataIsAuctionable(eq)) continue;
+            const copies = this.auctionStock.filter(s => dataAuctionItemKey(s) === dataAuctionItemKey(eq)).length;
+            if (copies >= DATA_AUCTION_MAX_COPIES_PER_ITEM) {
+              const salvage = dataAuctionBuyoutPrice(eq.tier, eq.rarity ?? 'Common', serviceBuilding.level);
+              overflowGold += salvage;
+              this.addLog('trade', `${hunter.name}'s ${dataEquipmentDisplayName(eq.rarity, eq.name)} overflow-salvaged (cap ×${DATA_AUCTION_MAX_COPIES_PER_ITEM}) for ${salvage}g`, hunter.name);
+              continue;
+            }
+            const buyout = dataAuctionBuyoutPrice(eq.tier, eq.rarity ?? 'Common', serviceBuilding.level);
+            if (this.auctionStock.length >= DATA_AUCTION_STOCK_CAP) {
+              const evicted = this.auctionStock.shift();
+              if (evicted) {
+                const salvage = dataGearSellPrice(evicted.tier, evicted.rarity ?? 'Common');
+                this.townGold += salvage;
+                this.addLog('trade', `Auction House full: oldest ${dataEquipmentDisplayName(evicted.rarity, evicted.name)} salvaged for ${salvage}g.`);
+              }
+            }
+            this.auctionStock.push({ ...eq });
+            hunter.gold += buyout;
+            auctionGold += buyout;
+            this.auctionLifetimeListings++;
+            this.addLog('trade', `${hunter.name} listed ${dataEquipmentDisplayName(eq.rarity, eq.name)} on Auction House for ${buyout}g`, hunter.name);
+            this.addFloatingText(`🏷️ Listed ${dataEquipmentDisplayName(eq.rarity, eq.name)} for ${buyout}g`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#4ade80', 12);
+          }
 
-          // Bonus price based on Trading Post level
-          totalSaleGold = Math.round(totalSaleGold * (1 + serviceBuilding.level * 0.1));
+          // Bonus price based on Trading Post level (normal loot only)
+          normalGold = normalItems.reduce((sum, item) => sum + item.value * item.count, 0);
+          normalGold = Math.round(normalGold * (1 + serviceBuilding.level * 0.1)) + overflowGold;
 
+          const totalSaleGold = auctionGold + normalGold;
           if (totalSaleGold > 0) {
-            for (const item of hunter.inventory) {
+            for (const item of normalItems) {
               if (!item.equipment) this.materialStock[item.iconType] += item.count;
             }
-            hunter.gold += totalSaleGold;
+            hunter.gold += normalGold;
             hunter.inventory = [];
             soundFx.playCoin();
 
@@ -2757,7 +2868,11 @@ export class GameSimulation {
 
             // NPC Store EXP & Auto Upgrade!
             this.recordStoreTransaction(serviceBuilding, Math.max(15, Math.round(totalSaleGold * 0.2)), totalSaleGold);
+          } else {
+            hunter.inventory = [];
           }
+          // Spend the fresh gold on an auction upgrade when one is affordable.
+          this.tryBuyAuctionUpgrade(hunter, serviceBuilding);
           break;
         }
         case 'UPGRADING_GEAR': {
@@ -3597,6 +3712,10 @@ export class GameSimulation {
       bossSpawnTimer: this.bossSpawnTimer,
       isBossActive: this.isBossActive,
       materialStock: this.materialStock,
+      auctionStock: this.auctionStock,
+      auctionLifetimeListings: this.auctionLifetimeListings,
+      auctionLifetimeSales: this.auctionLifetimeSales,
+      auctionLifetimeFees: this.auctionLifetimeFees,
       hunters: this.hunters,
       monsters: this.monsters,
       buildings: this.buildings,
@@ -3688,6 +3807,12 @@ export class GameSimulation {
           sim.materialStock[k] = typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
         }
       }
+
+      // Auction House v1 (old saves without it migrate to empty/zero)
+      sim.auctionStock = Array.isArray(data.auctionStock) ? data.auctionStock : [];
+      sim.auctionLifetimeListings = num(data.auctionLifetimeListings, 0);
+      sim.auctionLifetimeSales = num(data.auctionLifetimeSales, 0);
+      sim.auctionLifetimeFees = num(data.auctionLifetimeFees, 0);
 
       sim.hunters = Array.isArray(data.hunters) ? data.hunters : [];
       sim.buildings = Array.isArray(data.buildings) && data.buildings.length > 0
