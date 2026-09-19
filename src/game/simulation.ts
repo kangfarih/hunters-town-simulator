@@ -1,6 +1,6 @@
 import { 
   Hunter, Monster, Building, FloatingText, SkillVFX, GameLog, 
-  CharacterClass, HunterRarity, ItemDrop, Equipment, Skill,
+  CharacterClass, ItemDrop, Equipment, Skill,
   MaterialStock, MaterialType
 } from '../types';
 import { gridDistance, getIsometricFacing } from './isometric';
@@ -173,7 +173,7 @@ export const ZONE_ROAM_BOUNDS: Record<1 | 2 | 3, { minGx: number; maxGx: number;
 // Local save persistence
 export const SAVE_KEY = 'hunters-town-save-v1';
 const LEGACY_SAVE_KEY = 'evil-hunter-tycoon-save-v1';
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 // Grid shift applied when migrating pre-shift (v1) saves: every settled
 // coordinate moves +20/+20 as town relocated NW→center.
 const SAVE_SHIFT = 20;
@@ -288,20 +288,11 @@ export function serviceTime(b: Building): number {
   }
 }
 
-/** Lv-1 base stats for a class+rarity (rarity multiplier + trainee gear names). */
-export function baseStatsFor(charClass: CharacterClass, rarity: HunterRarity): {
+/** Lv-1 base stats for a class (flat baseline, no rarity multiplier + trainee gear names). */
+export function baseStatsFor(charClass: CharacterClass): {
   maxHp: number; atk: number; def: number; critRate: number; speed: number;
   weaponName: string; armorName: string; accessoryName: string;
 } {
-  const rarityMultiplier: Record<HunterRarity, number> = {
-    Normal: 1.0,
-    Rare: 1.25,
-    Superior: 1.55,
-    Heroic: 2.0,
-    Legendary: 2.7
-  };
-  const mult = rarityMultiplier[rarity];
-
   let baseHp = 120;
   let baseAtk = 22;
   let baseDef = 8;
@@ -335,9 +326,9 @@ export function baseStatsFor(charClass: CharacterClass, rarity: HunterRarity): {
   }
 
   return {
-    maxHp: Math.round(baseHp * mult),
-    atk: Math.round(baseAtk * mult),
-    def: Math.round(baseDef * mult),
+    maxHp: Math.round(baseHp),
+    atk: Math.round(baseAtk),
+    def: Math.round(baseDef),
     critRate: baseCrit,
     speed,
     weaponName: `Trainee ${charClass === 'Berserker' ? 'Broadsword' : charClass === 'Ranger' ? 'Shortbow' : charClass === 'Sorcerer' ? 'Wooden Staff' : 'Mace'}`,
@@ -409,8 +400,8 @@ export class GameSimulation {
     this.spawnInitialMonsters();
 
     // Spawn 2 starter hunters so the simulation starts immediately
-    this.summonHero('Berserker', 'Rare');
-    this.summonHero('Ranger', 'Superior');
+    this.summonHero('Berserker');
+    this.summonHero('Ranger');
 
     this.addLog('summon', 'The Sanctuary Gate is open! Autonomous hunters will arrive every 30 seconds.');
   }
@@ -710,7 +701,7 @@ export class GameSimulation {
     }
   }
 
-  public summonHero(forcedClass?: CharacterClass, forcedRarity?: HunterRarity): Hunter | null {
+  public summonHero(forcedClass?: CharacterClass): Hunter | null {
     // Town full: no more slots until Sanctuary Hall levels up
     if (this.hunters.length >= this.maxHunters()) {
       this.addFloatingText('🏠 Town full! Upgrade Sanctuary Hall for +2 slots', SUMMON_PORTAL_POS.gx, SUMMON_PORTAL_POS.gy, '#fca5a5', 12);
@@ -719,18 +710,7 @@ export class GameSimulation {
     const classes: CharacterClass[] = ['Berserker', 'Ranger', 'Sorcerer', 'Paladin'];
     const charClass = forcedClass || classes[Math.floor(Math.random() * classes.length)];
 
-    // Rarity determination
-    let rarity: HunterRarity = forcedRarity || 'Normal';
-    if (!forcedRarity) {
-      const roll = Math.random();
-      if (roll < 0.03) rarity = 'Legendary';
-      else if (roll < 0.12) rarity = 'Heroic';
-      else if (roll < 0.30) rarity = 'Superior';
-      else if (roll < 0.60) rarity = 'Rare';
-      else rarity = 'Normal';
-    }
-
-    const base = baseStatsFor(charClass, rarity);
+    const base = baseStatsFor(charClass);
 
     const firstName = HUNTER_FIRST_NAMES[Math.floor(Math.random() * HUNTER_FIRST_NAMES.length)];
     const title = HUNTER_TITLES[Math.floor(Math.random() * HUNTER_TITLES.length)];
@@ -743,7 +723,6 @@ export class GameSimulation {
       id: `hunter-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       name: fullName,
       charClass,
-      rarity,
       level: 1,
       exp: 0,
       expToNext: 50,
@@ -816,8 +795,8 @@ export class GameSimulation {
 
     // Audio & Visual Fanfare
     soundFx.playSummon();
-    this.addFloatingText(`✨ SUMMON: [${rarity}] ${hunter.name}`, hunter.gx, hunter.gy, '#fde047', 14);
-    this.addLog('summon', `Summon Portal called [${rarity}] ${hunter.charClass} ${hunter.name} into town!`, hunter.name);
+    this.addFloatingText(`✨ SUMMON: ${hunter.name}`, hunter.gx, hunter.gy, '#fde047', 14);
+    this.addLog('summon', `Summon Portal called ${hunter.charClass} ${hunter.name} into town!`, hunter.name);
 
     return hunter;
   }
@@ -885,7 +864,7 @@ export class GameSimulation {
   /** Retrain all hunters to Lv 1 trainee state (keeps identity, deaths, position). */
   public resetHunterStats() {
     for (const h of this.hunters) {
-      const base = baseStatsFor(h.charClass, h.rarity);
+      const base = baseStatsFor(h.charClass);
       h.level = 1;
       h.exp = 0;
       h.expToNext = 50;
@@ -2950,7 +2929,7 @@ export class GameSimulation {
       const raw = window.localStorage.getItem(SAVE_KEY) ?? window.localStorage.getItem(LEGACY_SAVE_KEY);
       if (!raw) return null;
       const data = JSON.parse(raw);
-      if (!data || (data.version !== 1 && data.version !== SAVE_VERSION)) return null;
+      if (!data || (data.version !== 1 && data.version !== 2 && data.version !== SAVE_VERSION)) return null;
       // Pre-shift (v1) saves store 0-39 coords: shift every persisted
       // coordinate +20/+20 on load. V2 saves load unshifted.
       const needsShift = data.version === 1;
@@ -3091,6 +3070,9 @@ export class GameSimulation {
         // Field parties are runtime-only: they reform live, so every load
         // dissolves them (parties Map itself is never snapshotted).
         h.partyId = null;
+        // V3 migration: rarity system removed — strip label, keep live stats.
+        // Future retrains via resetHunterStats() recompute from flat 1.0x baseline.
+        if ('rarity' in (h as unknown as Record<string, unknown>)) delete (h as unknown as Record<string, unknown>).rarity;
         if (typeof h.isAttacking !== 'boolean') h.isAttacking = false;
         // Migrate saves from before the mood/morale system
         if (typeof h.mood !== 'number' || !Number.isFinite(h.mood)) h.mood = 100;

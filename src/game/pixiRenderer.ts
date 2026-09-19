@@ -820,11 +820,11 @@ export class PixiRenderer {
 
         const hpBar = new Graphics();
         const nameText = new Text({
-          text: `[${hunter.rarity[0]}] ${hunter.name}`,
+          text: `${hunter.name}`,
           style: new TextStyle({
             fontFamily: 'monospace',
             fontSize: 9,
-            fill: this.getRarityColor(hunter.rarity),
+            fill: '#cbd5e1',
             fontWeight: 'bold',
             stroke: { color: '#000000', width: 2 }
           })
@@ -879,7 +879,7 @@ export class PixiRenderer {
       // Name & Level (party icon prefix beside the name; boss/monster labels untouched)
       const partyIcon = leaderIds.has(hunter.id) ? '♛ ' : hunter.partyId ? '👥 ' : '';
       hData.nameText.text = `${partyIcon}Lv.${hunter.level} ${hunter.name.split(' ')[0]}`;
-      hData.nameText.style.fill = partyColor(hunter.partyId) ?? this.getRarityColor(hunter.rarity);
+      hData.nameText.style.fill = partyColor(hunter.partyId) ?? '#cbd5e1';
       hData.nameText.x = screenPos.x;
       hData.nameText.y = screenPos.y - 44;
       hData.nameText.zIndex = hData.sprite.zIndex + 6;
@@ -1175,16 +1175,6 @@ export class PixiRenderer {
     const screenPos = gridToScreen(gx, gy);
     this.cameraX = (this.app.screen.width / 2) - screenPos.x * this.cameraZoom;
     this.cameraY = (this.app.screen.height / 2) - screenPos.y * this.cameraZoom;
-  }
-
-  private getRarityColor(rarity: string): string {
-    switch (rarity) {
-      case 'Legendary': return '#f59e0b';
-      case 'Heroic': return '#ef4444';
-      case 'Superior': return '#a855f7';
-      case 'Rare': return '#38bdf8';
-      default: return '#cbd5e1';
-    }
   }
 
   /** Fully tear down a Pixi Application: stop its ticker first so no
