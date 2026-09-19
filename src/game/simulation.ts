@@ -1119,7 +1119,9 @@ export class GameSimulation {
       attackCooldown: 1.5,
       roamPauseTimer: Math.random() * 2.5,
       isBoss,
-      animFrame: 0
+      animFrame: 0,
+      animTick: 0,
+      attackAnimTimer: 0
     };
 
     this.monsters.push(monster);
@@ -1910,6 +1912,17 @@ export class GameSimulation {
 
       soundFx.playLevelUp();
       this.addFloatingText(`⭐ LEVEL UP! [Lv.${hunter.level}]`, hunter.gx, hunter.gy - 0.8, '#facc15', 15);
+      this.skillVfxs.push({
+        id: `vfx-levelup-${Date.now()}-${Math.random()}`,
+        type: 'levelup',
+        startX: hunter.gx,
+        startY: hunter.gy,
+        targetX: hunter.gx,
+        targetY: hunter.gy,
+        duration: 0.9,
+        elapsed: 0,
+        color: '#facc15'
+      });
       this.addLog('combat', `${hunter.name} advanced to Level ${hunter.level}!`, hunter.name);
 
       // Check if unlocked a new tier skill (every 3 levels)
@@ -2301,6 +2314,17 @@ export class GameSimulation {
 
           soundFx.playLevelUp();
           this.addFloatingText(`📜 Skill Upgraded: ${skill.name} (Lv.${skill.level})`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#a855f7', 13);
+          this.skillVfxs.push({
+            id: `vfx-skillup-${Date.now()}-${Math.random()}`,
+            type: 'levelup',
+            startX: serviceBuilding.doorGx,
+            startY: serviceBuilding.doorGy,
+            targetX: serviceBuilding.doorGx,
+            targetY: serviceBuilding.doorGy,
+            duration: 0.9,
+            elapsed: 0,
+            color: '#a855f7'
+          });
           this.addLog('skill', `${hunter.name} upgraded ${skill.name} to Lv.${skill.level} at the Academy for ${cost}g.`, hunter.name);
 
           this.recordStoreTransaction(serviceBuilding, 25, cost);
@@ -2451,6 +2475,17 @@ export class GameSimulation {
   // --------------------------------------------------------------------------
 
   private updateMonsterAI(monster: Monster, dt: number) {
+    // Tick-driven animation: IDLE breathes slow, PATROL bobs, COMBAT snaps.
+    if (typeof monster.animTick !== 'number' || !Number.isFinite(monster.animTick)) monster.animTick = 0;
+    if (typeof monster.animFrame !== 'number' || !Number.isFinite(monster.animFrame)) monster.animFrame = 0;
+    if (typeof monster.attackAnimTimer !== 'number' || !Number.isFinite(monster.attackAnimTimer)) monster.attackAnimTimer = 0;
+    if (monster.attackAnimTimer > 0) monster.attackAnimTimer -= dt;
+    const animRate = monster.state === 'COMBAT' ? 0.15 : (monster.state === 'PATROL' ? 0.22 : 0.35);
+    monster.animTick += dt;
+    if (monster.animTick >= animRate) {
+      monster.animTick = 0;
+      monster.animFrame = (monster.animFrame + 1) % 2;
+    }
     // Check if attacked by hunter or hunter nearby
     if (monster.state === 'IDLE' || monster.state === 'PATROL') {
       // Find nearest hunter
@@ -2497,6 +2532,7 @@ export class GameSimulation {
         monster.attackCooldown -= dt;
         if (monster.attackCooldown <= 0) {
           monster.attackCooldown = 1.8;
+          monster.attackAnimTimer = 0.35;
           const dmg = Math.max(3, Math.round(monster.atk - this.effectiveDef(hunter) * 0.5));
           hunter.hp -= dmg;
           // Getting mauled ruins the mood (which in turn scales combat stats)
@@ -3035,6 +3071,9 @@ export class GameSimulation {
         if (typeof m.roamPauseTimer !== 'number' || !Number.isFinite(m.roamPauseTimer)) {
           m.roamPauseTimer = Math.random() * 2;
         }
+        if (typeof m.animFrame !== 'number' || !Number.isFinite(m.animFrame)) m.animFrame = 0;
+        if (typeof m.animTick !== 'number' || !Number.isFinite(m.animTick)) m.animTick = 0;
+        if (typeof m.attackAnimTimer !== 'number' || !Number.isFinite(m.attackAnimTimer)) m.attackAnimTimer = 0;
         const bounds = ZONE_ROAM_BOUNDS[m.zone as 1 | 2 | 3];
         if (bounds) {
           m.gx = Math.min(bounds.maxGx, Math.max(bounds.minGx, num(m.gx, bounds.minGx)));

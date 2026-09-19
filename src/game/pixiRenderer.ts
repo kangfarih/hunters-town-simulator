@@ -179,7 +179,7 @@ export class PixiRenderer {
     });
 
     // Pre-cache VFX textures
-    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'impact'].forEach(v => {
+    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'impact', 'levelup'].forEach(v => {
       this.vfxTextures.set(v, createSkillVfxTexture(v));
     });
   }
@@ -901,7 +901,8 @@ export class PixiRenderer {
 
     this.simulation.monsters.forEach(m => {
       let mData = this.monsterSprites.get(m.id);
-      const texture = this.getMonsterTexture(m.type, Math.floor(Date.now() / 250) % 2);
+      const frame = typeof m.animFrame === 'number' && Number.isFinite(m.animFrame) ? Math.abs(Math.floor(m.animFrame)) % 2 : 0;
+      const texture = this.getMonsterTexture(m.type, frame);
 
       if (!mData) {
         const sprite = new Sprite(texture);
@@ -948,7 +949,22 @@ export class PixiRenderer {
       const screenPos = gridToScreen(m.gx, m.gy);
       mData.sprite.x = screenPos.x;
       mData.sprite.y = screenPos.y;
-      mData.sprite.scale.set(m.isBoss ? 1.5 : 1.0);
+      const baseScale = m.isBoss ? 1.5 : 1.0;
+      // Face left/right (monster art faces right; mirror for SW).
+      const faceSign = m.facing === 'SW' ? -1 : 1;
+      // Walk/idle bob: PATROL bobs, IDLE breathes subtly, COMBAT tenses.
+      const bobY = m.state === 'PATROL' ? (frame === 1 ? -2 : 0) : (m.state === 'COMBAT' ? 1 : Math.sin(frame * Math.PI) * 0.5);
+      mData.sprite.y += bobY;
+      mData.sprite.scale.set(baseScale * faceSign, baseScale);
+      // Attack lunge toward facing when attackAnimTimer is active.
+      const atkT = typeof m.attackAnimTimer === 'number' && m.attackAnimTimer > 0
+        ? Math.max(0, Math.min(1, m.attackAnimTimer / 0.35))
+        : 0;
+      if (atkT > 0) {
+        const punch = Math.sin((1 - atkT) * Math.PI) * 8;
+        mData.sprite.x += (m.facing === 'SW' ? -1 : 1) * punch;
+        mData.sprite.scale.set(baseScale * faceSign * 1.08, baseScale * 0.94);
+      }
       mData.sprite.zIndex = (m.gx + m.gy) * 100 + 15;
 
       // Monster HP Bar
@@ -985,7 +1001,7 @@ export class PixiRenderer {
       // Per-effect pacing: arrows/slashes snap fast, pillars linger
       const pacing: Record<string, number> = {
         multishot: 0.65, slash: 0.7, impact: 0.8,
-        meteor: 1.0, whirlwind: 1.0, smite: 1.15,
+        meteor: 1.0, whirlwind: 1.0, smite: 1.15, levelup: 1.2,
       };
       const visualDuration = vfx.duration * (pacing[vfx.type] ?? 1.0);
       const progress = Math.min(1, vfx.elapsed / visualDuration);
@@ -1030,6 +1046,13 @@ export class PixiRenderer {
         sprite.y = startScreen.y + dy * t - 8;
         sprite.rotation = flightAngle;
         sprite.scale.set(0.9 + pop * 0.5);
+      } else if (vfx.type === 'levelup') {
+        // Level-up pillar erupts from the hunter and rises, ring expanding
+        sprite.x = startScreen.x;
+        sprite.y = startScreen.y - 26 - progress * 22;
+        const s = 0.7 + pop * 0.9;
+        sprite.scale.set(s, 0.8 + progress * 0.8);
+        sprite.alpha = fade * (0.8 + 0.2 * Math.sin(progress * 18));
       } else {
         // Impact burst blooms exactly on the target
         sprite.x = targetScreen.x;

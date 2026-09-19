@@ -1158,6 +1158,28 @@ export function createSkillVfxTexture(type: string): Texture {
       ctx.lineTo(center + offset + 5, center - 14);
       ctx.fill();
     });
+  } else if (type === 'levelup') {
+    // Level-up burst: gold pillar + expanding ring + rising sparks
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';
+    ctx.fillRect(center - 5, 4, 10, size - 8);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(center - 2, 4, 4, size - 8);
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(center, center + 6, 20, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center, center + 6, 26, 0, Math.PI * 2);
+    ctx.stroke();
+    // Rising sparks
+    ctx.fillStyle = '#fef9c3';
+    ctx.fillRect(center - 12, 8, 3, 3);
+    ctx.fillRect(center + 8, 16, 3, 3);
+    ctx.fillRect(center - 4, 24, 2, 2);
+    ctx.fillRect(center + 3, 6, 2, 2);
   } else {
     // Impact spark burst
     ctx.fillStyle = '#facc15';

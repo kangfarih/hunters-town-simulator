@@ -140,6 +140,8 @@ export interface Monster {
   
   isBoss?: boolean;
   animFrame: number;
+  animTick: number; // accumulates dt to advance animFrame (tick-driven, not wall-clock)
+  attackAnimTimer: number; // 0.35 -> 0 lunge window after a monster lands a hit
 }
 
 export type BuildingType = 
@@ -192,7 +194,7 @@ export interface FloatingText {
 
 export interface SkillVFX {
   id: string;
-  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'impact';
+  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'impact' | 'levelup';
   startX: number;
   startY: number;
   targetX: number;
