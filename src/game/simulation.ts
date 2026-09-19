@@ -29,6 +29,7 @@ import {
   classWeaponNoun as dataClassWeaponNoun,
   classArmorNoun as dataClassArmorNoun,
   SKILL_EXP_TO_NEXT as DATA_SKILL_EXP_TO_NEXT,
+  skillExpToNext as dataSkillExpToNext,
   createClassSkill as dataCreateClassSkill,
   skillExpPerCast,
   skillTier,
@@ -108,13 +109,16 @@ export const rarityHex = dataRarityHex;
 export const rarityTextClass = dataRarityTextClass;
 export const rarityBorderClass = dataRarityBorderClass;
 export const SKILL_EXP_TO_NEXT = DATA_SKILL_EXP_TO_NEXT;
+// DR cost side: rank-scaled need (30 * rank), canonical in ./data/skills.
+export const skillExpToNext = dataSkillExpToNext;
 export type { EpicDef };
 export const EPIC_DEFS: EpicDef[] = DATA_EPIC_DEFS;
 export const epicEffectDescription = dataEpicEffectDescription;
 
 // --------------------------------------------------------------------------
-// Skill mastery: each cast grants 2 + cooldownSec EXP (longer CD = more).
-// At ~5.5-7 EXP/cast, SKILL_EXP_TO_NEXT = 30 means ~5 casts to READY —
+// Skill mastery with diminishing returns (DR): cost scales (30 * rank),
+// gain diminishes ((2 + cooldownSec) / (1 + 0.35*(rank-1)), 1-decimal).
+// At rank 1 (~5.5-7 EXP/cast, need 30) that's still ~5 casts to READY —
 // fast enough to see Rank 2-3 in a session, with Academy gold + trips
 // still gating the climb to max.
 // --------------------------------------------------------------------------
@@ -1547,14 +1551,15 @@ export class GameSimulation {
   }
 
   /**
-   * Usage-based skill mastery: flat + CD bonus (longer CD = more EXP).
+   * Usage-based skill mastery with DR gain side (rank-diminished per-cast EXP).
    * Callers apply gray gating (damage) or skip it (support).
    */
   private grantSkillMastery(hunter: Hunter, skill: Skill) {
     if (skill.level >= skill.maxLevel) return;
     const curExp = typeof skill.exp === 'number' && Number.isFinite(skill.exp) ? skill.exp : 0;
     const need = typeof skill.expToNext === 'number' && Number.isFinite(skill.expToNext) ? skill.expToNext : SKILL_EXP_TO_NEXT;
-    skill.exp = Math.min(need, curExp + skillExpPerCast(skill.cooldownMs));
+    // DR gain side: higher ranks earn less per cast (support casts ungated here too).
+    skill.exp = Math.min(need, curExp + skillExpPerCast(skill.cooldownMs, skill.level));
     if (skill.exp >= need) {
       this.addFloatingText(`✨ ${skill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
     }
@@ -1935,13 +1940,14 @@ export class GameSimulation {
         if (crescendo > 0) damage = skillBase + (damage - skillBase) * (1 + crescendo);
       }
 
-      // Usage-based mastery: flat + CD bonus (longer CD = more EXP).
+      // Usage-based mastery with DR gain side (rank-diminished per-cast EXP).
       // Gray prey teaches nothing (matches 0 hunter EXP on gray).
       const isGrayTarget = !monster.isBoss && (hunter.level - monster.level >= this.agentConfig.grayGap);
       if (!isGrayTarget && readySkill.level < readySkill.maxLevel) {
         const curExp = typeof readySkill.exp === 'number' && Number.isFinite(readySkill.exp) ? readySkill.exp : 0;
         const need = typeof readySkill.expToNext === 'number' && Number.isFinite(readySkill.expToNext) ? readySkill.expToNext : SKILL_EXP_TO_NEXT;
-        const gain = 2 + readySkill.cooldownMs / 1000;
+        // DR gain side: same divisor as grantSkillMastery; gray stays 0 gain.
+        const gain = skillExpPerCast(readySkill.cooldownMs, readySkill.level);
         readySkill.exp = Math.min(need, curExp + gain);
         if (readySkill.exp >= need) {
           this.addFloatingText(`✨ ${readySkill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
@@ -2760,6 +2766,8 @@ export class GameSimulation {
           skill.level += 1;
           skill.damageMultiplier += 0.3;
           skill.exp = 0;
+          // DR cost side: the new rank needs 30 * rank for its next READY.
+          skill.expToNext = dataSkillExpToNext(skill.level);
 
           soundFx.playLevelUp();
           this.addFloatingText(`📜 Skill Upgraded: ${skill.name} (Lv.${skill.level})`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#a855f7', 13);
@@ -3746,11 +3754,9 @@ export class GameSimulation {
         if (Array.isArray(h.skills)) {
           for (const skill of h.skills) {
             if (!skill || typeof skill !== 'object') continue;
-            // Migrate to usage-based EXP (SKILL_EXP_TO_NEXT to READY).
+            // Migrate to usage-based EXP (rank-scaled need to READY).
             // Old 100-threshold saves collapse: exp clamps into the new need.
             if (typeof skill.exp !== 'number' || !Number.isFinite(skill.exp)) skill.exp = 0;
-            if (typeof skill.expToNext !== 'number' || !Number.isFinite(skill.expToNext) || skill.expToNext !== SKILL_EXP_TO_NEXT) skill.expToNext = SKILL_EXP_TO_NEXT;
-            skill.exp = Math.max(0, Math.min(skill.expToNext, skill.exp));
             const max = (typeof skill.maxLevel === 'number' && Number.isFinite(skill.maxLevel))
               ? skill.maxLevel
               : 5;
@@ -3793,6 +3799,9 @@ export class GameSimulation {
               skill.damageMultiplier = canon.damageMultiplier + 0.3 * Math.max(0, rank - 1);
               if (typeof skill.lastUsedMs !== 'number' || !Number.isFinite(skill.lastUsedMs)) skill.lastUsedMs = 0;
             }
+            // DR cost side: recompute need from the (clamped) rank, not a flat reset.
+            skill.expToNext = dataSkillExpToNext(skill.level);
+            skill.exp = Math.max(0, Math.min(skill.expToNext, skill.exp));
           }
         }
         if (!Number.isFinite(h.gx) || !Number.isFinite(h.gy) || h.gx < -2 || h.gx > 62 || h.gy < -2 || h.gy > 62) {

@@ -21,6 +21,7 @@ export {
 export type { ClassKit, SkillTemplate } from './classes';
 export {
   SKILL_EXP_TO_NEXT,
+  skillExpToNext,
   skillExpPerCast,
   createClassSkill,
   skillTier,

@@ -1,5 +1,8 @@
-// Skill mastery: each cast grants 2 + cooldownSec EXP (longer CD = more).
-// At ~5.5-7 EXP/cast, SKILL_EXP_TO_NEXT = 30 means ~5 casts to READY —
+// Skill mastery with diminishing returns (DR):
+// - Cost side: expToNext = 30 * rank (rank1->2 needs 30, 2->3 needs 60, ...).
+// - Gain side: each cast grants (2 + cooldownSec) / (1 + 0.35*(rank-1)),
+//   rounded to 1 decimal (rank1 full, rank4 ~half). Gray targets pay 0.
+// At rank 1 (~5.5-7 EXP/cast, need 30) that's still ~5 casts to READY —
 // fast enough to see Rank 2-3 in a session, with Academy gold + trips
 // still gating the climb to max.
 
@@ -8,9 +11,18 @@ import { CLASS_KITS } from './classes';
 
 export const SKILL_EXP_TO_NEXT = 30;
 
-/** EXP granted per cast: flat + cooldown bonus (longer CD = more EXP). */
-export function skillExpPerCast(cooldownMs: number): number {
-  return 2 + cooldownMs / 1000;
+/** DR cost side: EXP needed to go from this rank to the next (30 * rank). */
+export function skillExpToNext(level: number): number {
+  const rank = Number.isFinite(level) ? Math.max(1, Math.floor(level)) : 1;
+  return SKILL_EXP_TO_NEXT * rank;
+}
+
+/** EXP granted per cast: flat + cooldown bonus, diminished by rank. */
+export function skillExpPerCast(cooldownMs: number, level = 1): number {
+  const rank = Number.isFinite(level) ? Math.max(1, Math.floor(level)) : 1;
+  const base = 2 + cooldownMs / 1000;
+  // DR gain side: rank1 full, rank4 ~half (1/(1+0.35*3) ~= 0.49).
+  return Math.round((base / (1 + 0.35 * (rank - 1))) * 10) / 10;
 }
 
 /** Build a fresh Lv-1 class skill for a tier (1-3). Pure: no simulation state. */
@@ -29,7 +41,8 @@ export function createClassSkill(charClass: CharacterClass, tier: number): Skill
     effectType: tpl.effectType,
     description: tpl.description,
     exp: 0,
-    expToNext: SKILL_EXP_TO_NEXT,
+    // DR cost side: fresh rank-1 skill needs the rank-1 base (30).
+    expToNext: skillExpToNext(1),
   };
 }
 
