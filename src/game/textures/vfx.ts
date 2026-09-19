@@ -4,6 +4,39 @@
 import { Texture } from 'pixi.js';
 import { createPixelCanvas } from '../objects/iso';
 
+/**
+ * Strict-square whirl arc: 270° band of 3-4px blocks on an iso-flattened
+ * ring + motion dashes in the gap. White/slate/blue steel palette.
+ * The body never spins — this overlay does (see HuntersLayer).
+ */
+export function createWhirlArcTexture(): Texture {
+  const size = 64;
+  const canvas = createPixelCanvas(size, size);
+  const ctx = canvas.getContext('2d')!;
+  const cx = size / 2;
+  const cy = size / 2;
+  const band = ['#f8fafc', '#94a3b8', '#38bdf8', '#e2e8f0'];
+  let k = 0;
+  for (let a = 0; a < 270; a += 7.5, k++) {
+    const rad = (a * Math.PI) / 180;
+    // Dithered radius 20..22 so the band feels hand-placed.
+    const r = 20 + (Math.sin(a * 12.9898) * 0.5 + 0.5) * 2;
+    const x = Math.round(cx + Math.cos(rad) * r);
+    const y = Math.round(cy + Math.sin(rad) * r * 0.55);
+    const s = k % 3 === 0 ? 4 : 3;
+    ctx.fillStyle = band[k % band.length]!;
+    ctx.fillRect(x - 1, y - 1, s, s);
+  }
+  // Motion dashes in the open 90° gap: tangential 6x2 rects.
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillRect(cx + 12, cy + 8, 6, 2);
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(cx + 4, cy + 12, 5, 2);
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillRect(cx + 18, cy + 3, 5, 2);
+  return Texture.from(canvas);
+}
+
 export function createSkillVfxTexture(type: string): Texture {
   const size = 64;
   const canvas = createPixelCanvas(size, size);
@@ -39,17 +72,8 @@ export function createSkillVfxTexture(type: string): Texture {
       ctx.fillRect(center + ox, center + oy, s, s);
     }
   } else if (type === 'whirlwind') {
-    // Double cyclone vortex
-    ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(center, center, 18, 0, Math.PI * 1.5);
-    ctx.stroke();
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(center, center, 24, Math.PI * 0.5, Math.PI * 2);
-    ctx.stroke();
+    // Delegates to the strict-square arc painter above (single source).
+    return createWhirlArcTexture();
   } else if (type === 'smite') {
     // Holy radiant beam
     ctx.fillStyle = 'rgba(253, 224, 71, 0.8)';

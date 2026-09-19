@@ -311,15 +311,41 @@ export class EffectsLayer {
       const acc = (this.sparkAcc.get(z.id) ?? 0);
       const scatter = () => bx + (Math.random() - 0.5) * 2 * rxPx;
       if (z.kind === 'storm') {
-        // Cyclone dust: pale squares whipping sideways, no gravity.
-        const na = acc + dt * 16 * fade;
+        // Cyclone dust orbits the CASTER (storms pin to the target's
+        // ground, but the warrior is the visual center). Tangential
+        // velocity on an iso-flattened ring + slight outward drift.
+        // A weak gray puff lingers at the anchor so the damage zone
+        // still reads on the ground.
+        const caster = sim.hunters.find(h => h.id === z.sourceId);
+        const na = acc + dt * 20 * fade;
         const nn = Math.floor(na);
         this.sparkAcc.set(z.id, na - nn);
+        const dust = ['#e2e8f0', '#94a3b8', '#38bdf8', '#f8fafc'];
         for (let i = 0; i < nn; i++) {
-          this.particles.spawnSpark(scatter(), by - 6 - Math.random() * 14, {
-            colors: ['#e2e8f0', '#94a3b8', '#38bdf8'],
-            speed: 34, vx: (Math.random() < 0.5 ? -1 : 1) * 26,
-            vy: -6, gravity: 0, life: 0.6, spread: 4,
+          if (caster) {
+            const cp = gridToScreen(caster.gx, caster.gy);
+            const a = Math.random() * Math.PI * 2;
+            const r = 13 + Math.random() * 6;
+            const ex = cp.x + Math.cos(a) * r;
+            const ey = cp.y - 14 + Math.sin(a) * r * 0.55;
+            // Tangent (counter-clockwise) + outward drift.
+            const tx = -Math.sin(a) * 95 + Math.cos(a) * 14;
+            const ty = Math.cos(a) * 95 * 0.55 + Math.sin(a) * 8;
+            this.particles.spawnSpark(ex, ey, {
+              colors: dust, speed: 8, vx: tx, vy: ty,
+              gravity: 0, life: 0.55, spread: 1, size: 2,
+            });
+          } else {
+            this.particles.spawnSpark(scatter(), by - 6 - Math.random() * 14, {
+              colors: dust, speed: 30, vy: -6, gravity: 0, life: 0.6, spread: 4,
+            });
+          }
+        }
+        // Weak anchor puff so the ground zone reads.
+        if (Math.random() < dt * 5 * fade) {
+          this.particles.spawnSpark(scatter(), by - 4, {
+            colors: ['#94a3b8', '#64748b'], speed: 12, vy: -10,
+            gravity: 0, life: 0.7, spread: 6,
           });
         }
       } else if (z.kind === 'arrows') {
