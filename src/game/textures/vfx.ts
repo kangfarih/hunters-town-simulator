@@ -154,6 +154,31 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.fillRect(center + 8, 16, 3, 3);
     ctx.fillRect(center - 4, 24, 2, 2);
     ctx.fillRect(center + 3, 6, 2, 2);
+  } else if (type === 'death') {
+    // Soul burst: pale escaping wisp over a fading ring. Renderer tints
+    // bosses via scale (longer duration), particles add the rising trail.
+    ctx.strokeStyle = 'rgba(196, 181, 253, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(center, center + 4, 18, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(109, 107, 143, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center, center + 4, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    // Wisp core + rising fragments (lower = larger, fading upward)
+    ctx.fillStyle = '#f5f3ff';
+    ctx.fillRect(center - 3, center - 6, 6, 8);
+    ctx.fillStyle = '#c4b5fd';
+    ctx.fillRect(center - 5, center + 2, 3, 3);
+    ctx.fillRect(center + 3, center - 1, 3, 3);
+    ctx.fillStyle = '#a78bfa';
+    ctx.fillRect(center - 1, center - 14, 2, 3);
+    ctx.fillRect(center - 9, center - 8, 2, 2);
+    ctx.fillStyle = '#6d6b8f';
+    ctx.fillRect(center + 6, center - 10, 2, 2);
+    ctx.fillRect(center - 4, center - 20, 2, 2);
   } else {
     // Strict-square impact burst: 8 dithered sparks on the diagonals +
     // hot 2x2 core. Old version used fillRect on a circle — same squares,

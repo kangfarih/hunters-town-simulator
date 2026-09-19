@@ -14,7 +14,7 @@ export interface FloatingText {
 
 export interface SkillVFX {
   id: string;
-  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal' | 'ballad' | 'encore' | 'impact' | 'levelup';
+  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal' | 'ballad' | 'encore' | 'impact' | 'levelup' | 'death';
   startX: number;
   startY: number;
   targetX: number;

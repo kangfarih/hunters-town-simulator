@@ -2626,6 +2626,18 @@ export class GameSimulation {
 
   private handleMonsterDefeat(hunter: Hunter, monster: Monster) {    this.totalMonstersDefeated++;
     hunter.killCount++;
+    // Death burst: soul wisp blooms where the monster fell (bosses linger).
+    this.skillVfxs.push({
+      id: `death-${Date.now()}-${Math.random()}`,
+      type: 'death',
+      startX: monster.gx,
+      startY: monster.gy,
+      targetX: monster.gx,
+      targetY: monster.gy,
+      duration: monster.isBoss ? 0.9 : 0.5,
+      elapsed: 0,
+      color: monster.isBoss ? '#a855f7' : '#a78bfa',
+    });
     // Nursery + dungeon kills don't feed the auto-director: zone-1 spawns only feel
     // half the dynamic swing (zoneDamp 0.5), so counting ~98% forest kills
     // drives survival >80% → buffs to the 3x cap that zone 2/3 feel fully.

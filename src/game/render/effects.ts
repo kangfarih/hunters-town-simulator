@@ -173,7 +173,7 @@ export class EffectsLayer {
       const pacing: Record<string, number> = {
         multishot: 0.65, slash: 0.7, impact: 0.8, heal: 1.0,
         meteor: 1.0, smite: 1.15, holy_burst: 1.15, levelup: 1.2,
-        ballad: 0.9, encore: 1.0,
+        ballad: 0.9, encore: 1.0, death: 1.0,
       };
       const visualDuration = vfx.duration * (pacing[vfx.type] ?? 1.0);
       const progress = Math.min(1, vfx.elapsed / visualDuration);
@@ -248,6 +248,13 @@ export class EffectsLayer {
         const s = 0.7 + pop * 0.9;
         sprite.scale.set(s, 0.8 + progress * 0.8);
         sprite.alpha = fade * (0.8 + 0.2 * Math.sin(progress * 18));
+      } else if (vfx.type === 'death') {
+        // Soul burst blooms where the monster fell, ring expanding as the
+        // wisp rises. Bosses pass a longer duration, which reads as bigger.
+        sprite.x = targetScreen.x;
+        sprite.y = targetScreen.y - 12 - progress * 14;
+        const s = 0.6 + pop * 1.1;
+        sprite.scale.set(s);
       } else {
         // Impact burst blooms exactly on the target
         sprite.x = targetScreen.x;
@@ -466,6 +473,19 @@ export class EffectsLayer {
         } else {
           this.particles.spawnSpark(s.x, s.y - 26, {
             n: 1, colors: ['#fef9c3', '#facc15'], speed: 8, vy: -36, gravity: -10, life: 0.7, spread: 4,
+          });
+        }
+      } else if (vfx.type === 'death') {
+        // Soul escaping: pale wisp sparks rise continuously, one ring-pop
+        // on arrival. Boss kills (longer duration) read bigger via scale.
+        this.particles.spawnSpark(t.x, t.y - 12, {
+          n: 2, colors: ['#f5f3ff', '#c4b5fd', '#a78bfa'],
+          speed: 10, vy: -38, gravity: -12, life: 0.8, spread: 5,
+        });
+        if (burst(vfx.id)) {
+          this.particles.spawnSpark(t.x, t.y - 10, {
+            n: 8, colors: ['#f5f3ff', '#a78bfa', '#6d6b8f'],
+            speed: 60, life: 0.5, spread: 5,
           });
         }
       }
