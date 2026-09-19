@@ -1,4 +1,4 @@
-export type CharacterClass = 'Berserker' | 'Ranger' | 'Sorcerer' | 'Paladin' | 'Cleric';
+export type CharacterClass = 'Berserker' | 'Ranger' | 'Sorcerer' | 'Paladin' | 'Cleric' | 'Bard';
 
 export type HunterState = 
   | 'SPAWNING'
@@ -36,6 +36,7 @@ export type EquipmentEffectId =
   | 'deadeye'     // +crit, harder crits (Cometfang)
   | 'meteorfall'  // +skill damage (Solar Cataclysm)
   | 'bossbane'    // +dmg vs boss (Dawnbreaker)
+  | 'crescendo'   // +skill damage for Encore-buffed allies (Fateweaver Lute)
   | 'lifesteal'   // heal % of damage dealt (Bloodlord)
   | 'swiftwind'   // +attack speed (Windstalker)
   | 'focus'       // -skill cooldowns (Astral Veil)
@@ -63,7 +64,7 @@ export interface Skill {
   cooldownMs: number;
   lastUsedMs: number;
   damageMultiplier: number;
-  effectType: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal';
+  effectType: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal' | 'ballad' | 'encore';
   description: string;
   exp: number;
   expToNext: number;
@@ -122,6 +123,9 @@ export interface Hunter {
   tonics: number; // carried buff tonics (+20% ATK for 60s, drunk at fight start)
   tonicBoost: number; // active tonic ATK fraction (0.20 while buffed, else 0)
   tonicBoostTimer: number; // seconds remaining on the tonic buff
+  encoreBoost: number; // bonus ATK fraction from Bard Encore Anthem (0 = none)
+  encoreTimer: number; // seconds remaining on the Encore buff
+  goldFeverTimer: number; // seconds remaining on Bard Golden Finale loot buff
   deaths: number; // times knocked down and rescued by the clinic
 
   // Paladin tank kit (transient, never drives saves): absorb shield + taunt anchor.
@@ -224,7 +228,7 @@ export interface FloatingText {
 
 export interface SkillVFX {
   id: string;
-  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal' | 'impact' | 'levelup';
+  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal' | 'ballad' | 'encore' | 'impact' | 'levelup';
   startX: number;
   startY: number;
   targetX: number;

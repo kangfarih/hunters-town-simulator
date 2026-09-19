@@ -325,6 +325,13 @@ export function baseStatsFor(charClass: CharacterClass): {
     baseDef = 20;
     baseCrit = 0.05;
     speed = 0.036;
+  } else if (charClass === 'Bard') {
+    // Bard: frail party buffer, fastest feet, weak solo damage
+    baseHp = 95;
+    baseAtk = 16;
+    baseDef = 7;
+    baseCrit = 0.12;
+    speed = 0.046;
   } else {
     // Cleric: frail support healer, slightly quick feet
     baseHp = 85;
@@ -340,7 +347,7 @@ export function baseStatsFor(charClass: CharacterClass): {
     def: Math.round(baseDef),
     critRate: baseCrit,
     speed,
-    weaponName: `Trainee ${charClass === 'Berserker' ? 'Broadsword' : charClass === 'Ranger' ? 'Shortbow' : charClass === 'Sorcerer' ? 'Wooden Staff' : charClass === 'Paladin' ? 'Mace' : 'Chime'}`,
+    weaponName: `Trainee ${charClass === 'Berserker' ? 'Broadsword' : charClass === 'Ranger' ? 'Shortbow' : charClass === 'Sorcerer' ? 'Wooden Staff' : charClass === 'Paladin' ? 'Mace' : charClass === 'Bard' ? 'Lute' : 'Chime'}`,
     armorName: 'Novice Leather Coat',
     accessoryName: 'Copper Ring',
   };
@@ -431,6 +438,7 @@ export const EPIC_DEFS: EpicDef[] = [
   { name: 'Cometfang Longbow', slot: 'weapon', reqClass: 'Ranger', effectId: 'deadeye', effectValue: 0.12 },
   { name: 'Solar Cataclysm Staff', slot: 'weapon', reqClass: 'Sorcerer', effectId: 'meteorfall', effectValue: 0.35 },
   { name: 'Dawnbreaker Gavel', slot: 'weapon', reqClass: 'Paladin', effectId: 'bossbane', effectValue: 0.5 },
+  { name: 'Fateweaver Lute', slot: 'weapon', reqClass: 'Bard', effectId: 'crescendo', effectValue: 0.25 },
   { name: 'Bloodlord Carapace', slot: 'armor', effectId: 'lifesteal', effectValue: 0.10 },
   { name: 'Windstalker Shroud', slot: 'armor', effectId: 'swiftwind', effectValue: 0.012 },
   { name: 'Astral Veil Robe', slot: 'armor', effectId: 'focus', effectValue: 0.20 },
@@ -443,6 +451,7 @@ export function epicEffectDescription(effectId: EquipmentEffectId, value: number
     case 'deadeye': return `Deadeye: +${Math.round(value * 100)}% crit, crits hit x2.1`;
     case 'meteorfall': return `Meteorfall: +${Math.round(value * 100)}% skill damage`;
     case 'bossbane': return `Bossbane: +${Math.round(value * 100)}% damage vs bosses`;
+    case 'crescendo': return `Crescendo: Encore-buffed allies deal +${Math.round(value * 100)}% skill damage`;
     case 'lifesteal': return `Lifesteal: heal ${Math.round(value * 100)}% of damage dealt`;
     case 'swiftwind': return `Swiftwind: faster attacks`;
     case 'focus': return `Focus: skills recharge ${Math.round(value * 100)}% faster`;
@@ -866,7 +875,7 @@ export class GameSimulation {
       this.addFloatingText('🏠 Town full! Upgrade Sanctuary Hall for +2 slots', SUMMON_PORTAL_POS.gx, SUMMON_PORTAL_POS.gy, '#fca5a5', 12);
       return null;
     }
-    const classes: CharacterClass[] = ['Berserker', 'Ranger', 'Sorcerer', 'Paladin', 'Cleric'];
+    const classes: CharacterClass[] = ['Berserker', 'Ranger', 'Sorcerer', 'Paladin', 'Cleric', 'Bard'];
     const charClass = forcedClass || classes[Math.floor(Math.random() * classes.length)];
 
     const base = baseStatsFor(charClass);
@@ -946,6 +955,9 @@ export class GameSimulation {
       tonics: 0,
       tonicBoost: 0,
       tonicBoostTimer: 0,
+      encoreBoost: 0,
+      encoreTimer: 0,
+      goldFeverTimer: 0,
       deaths: 0,
       // Paladin tank kit starts unshielded
       shieldHp: 0,
@@ -1057,6 +1069,24 @@ export class GameSimulation {
         exp: 0,
         expToNext: SKILL_EXP_TO_NEXT
       };
+    } else if (charClass === 'Bard') {
+      return {
+        id: `skill-bard-${tier}`,
+        name: tier === 1 ? 'Dissonant Chord' : (tier === 2 ? 'Encore Anthem' : 'Golden Finale'),
+        level: 1,
+        maxLevel: 5,
+        cooldownMs: tier === 2 ? 6000 : (tier === 3 ? 8000 : 4000),
+        lastUsedMs: 0,
+        damageMultiplier: tier === 2 ? 0 : (tier === 1 ? 1.4 + tier * 0.3 : 2.0 + tier * 0.4),
+        effectType: tier === 1 ? 'ballad' : 'encore',
+        description: tier === 1
+          ? 'Strums a jarring chord dealing sonic damage.'
+          : tier === 2
+            ? 'Sings an anthem buffing nearby allies +20% ATK for 8s.'
+            : 'Grand finale: sonic damage plus +10% gold fever for the party (15s).',
+        exp: 0,
+        expToNext: SKILL_EXP_TO_NEXT
+      };
     } else {
       return {
         id: `skill-cleric-${tier}`,
@@ -1097,6 +1127,9 @@ export class GameSimulation {
       h.tonicBoostTimer = 0;
       h.shieldHp = 0;
       h.shieldTimer = 0;
+      h.encoreBoost = 0;
+      h.encoreTimer = 0;
+      h.goldFeverTimer = 0;
       h.inventory = [];
       h.skills = [this.createClassSkill(h.charClass, 1)];
       h.killCount = 0;
@@ -1482,6 +1515,19 @@ export class GameSimulation {
       }
     }
 
+    // Bard Encore + Gold Fever buffs tick down in real time
+    if (typeof hunter.encoreTimer !== 'number' || !Number.isFinite(hunter.encoreTimer)) hunter.encoreTimer = 0;
+    if (typeof hunter.encoreBoost !== 'number' || !Number.isFinite(hunter.encoreBoost)) hunter.encoreBoost = 0;
+    if (hunter.encoreTimer > 0) {
+      hunter.encoreTimer -= dt;
+      if (hunter.encoreTimer <= 0) {
+        hunter.encoreTimer = 0;
+        hunter.encoreBoost = 0;
+      }
+    }
+    if (typeof hunter.goldFeverTimer !== 'number' || !Number.isFinite(hunter.goldFeverTimer)) hunter.goldFeverTimer = 0;
+    if (hunter.goldFeverTimer > 0) hunter.goldFeverTimer -= dt;
+
     // Plaza LFP re-queue cooldown ticks down in real time
     if (typeof hunter.lfpCooldown !== 'number' || !Number.isFinite(hunter.lfpCooldown)) hunter.lfpCooldown = 0;
     if (hunter.lfpCooldown > 0) hunter.lfpCooldown -= dt;
@@ -1656,7 +1702,7 @@ export class GameSimulation {
 
         // Move towards monster
         const dist = gridDistance(hunter.gx, hunter.gy, monster.gx, monster.gy);
-        const attackRange = (hunter.charClass === 'Ranger' || hunter.charClass === 'Sorcerer' || hunter.charClass === 'Cleric') ? 2.8 : 1.2;
+        const attackRange = (hunter.charClass === 'Ranger' || hunter.charClass === 'Sorcerer' || hunter.charClass === 'Cleric' || hunter.charClass === 'Bard') ? 2.8 : 1.2;
 
         if (dist <= attackRange) {
           hunter.state = 'FIGHTING';
@@ -1883,9 +1929,9 @@ export class GameSimulation {
     return 0.75 + (mood / 100) * 0.5;
   }
 
-  /** Effective attack after mood scaling and tavern morale + tonic buffs. */
+  /** Effective attack after mood scaling and tavern morale + tonic + Encore buffs. */
   public effectiveAtk(hunter: Hunter): number {
-    return (hunter.atk + hunter.weapon.atkBonus + hunter.accessory.atkBonus) * this.moodScale(hunter) * (1 + hunter.moraleBoost + hunter.tonicBoost);
+    return (hunter.atk + hunter.weapon.atkBonus + hunter.accessory.atkBonus) * this.moodScale(hunter) * (1 + hunter.moraleBoost + hunter.tonicBoost + (hunter.encoreBoost ?? 0));
   }
 
   /** Effective defense after mood scaling + Paladin guard aura. */
@@ -2086,6 +2132,64 @@ export class GameSimulation {
       // No hurt ally in range: fall through to the normal (weak) attack path.
     }
 
+    // Bard Encore AI: if a pure-buff encore is ready and an ally nearby lacks
+    // the Encore buff, sing INSTEAD of attacking this tick (support tax).
+    if (hunter.charClass === 'Bard') {
+      const nowMsBard = Date.now();
+      const encoreSkill = hunter.skills.find(s => s.effectType === 'encore' && (s.damageMultiplier ?? 0) === 0 && nowMsBard - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s)) ?? null;
+      if (encoreSkill) {
+        const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
+        const partyIds = party ? new Set(this.partyMembers(hunter).map(m => m.id)) : null;
+        let needsSong = false;
+        const checkNeeds = (h: Hunter) => {
+          if (h.hp <= 0) return;
+          if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) return;
+          if ((h.encoreTimer ?? 0) <= 0.5) needsSong = true;
+        };
+        if (partyIds) for (const h of this.hunters) { if (partyIds.has(h.id)) checkNeeds(h); if (needsSong) break; }
+        if (!needsSong) for (const h of this.hunters) { if (partyIds && partyIds.has(h.id)) continue; checkNeeds(h); if (needsSong) break; }
+        // Solo Bard with expired buff still sings for self.
+        if (!needsSong && (hunter.encoreTimer ?? 0) <= 0.5) needsSong = true;
+        if (needsSong) {
+          encoreSkill.lastUsedMs = nowMsBard;
+          const buffAtk = 0.20;
+          const buffDur = 8;
+          for (const h of this.hunters) {
+            if (h.hp <= 0) continue;
+            if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) continue;
+            // One Encore per hunter: strongest wins, refresh duration.
+            if ((h.encoreBoost ?? 0) < buffAtk) h.encoreBoost = buffAtk;
+            h.encoreTimer = Math.max(h.encoreTimer ?? 0, buffDur);
+          }
+          // Usage-based mastery for the anthem (no gray gating for support).
+          if (encoreSkill.level < encoreSkill.maxLevel) {
+            const curExp = typeof encoreSkill.exp === 'number' && Number.isFinite(encoreSkill.exp) ? encoreSkill.exp : 0;
+            const need = typeof encoreSkill.expToNext === 'number' && Number.isFinite(encoreSkill.expToNext) ? encoreSkill.expToNext : SKILL_EXP_TO_NEXT;
+            const gain = 2 + encoreSkill.cooldownMs / 1000;
+            encoreSkill.exp = Math.min(need, curExp + gain);
+            if (encoreSkill.exp >= need) {
+              this.addFloatingText(`✨ ${encoreSkill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
+            }
+          }
+          this.skillVfxs.push({
+            id: `vfx-encore-${Date.now()}-${Math.random()}`,
+            type: 'encore',
+            startX: hunter.gx,
+            startY: hunter.gy,
+            targetX: hunter.gx,
+            targetY: hunter.gy,
+            duration: 0.6,
+            elapsed: 0,
+            color: '#2dd4bf'
+          });
+          soundFx.playLute();
+          this.addFloatingText(`🎵 ${encoreSkill.name}!`, hunter.gx, hunter.gy - 0.5, '#2dd4bf', 11);
+          return;
+        }
+      }
+      // No unbuffed ally in range: fall through to ballad/finale damage path.
+    }
+
     // Check available skills for auto-cast (round-robin: oldest ready first
     // so 2nd/3rd skills actually get casts instead of skills[0] hogging).
     // Focus (Astral Veil) shortens every cooldown.
@@ -2109,6 +2213,18 @@ export class GameSimulation {
       // Meteorfall (Solar Cataclysm): +35% on the skill portion only.
       const meteorfall = this.equippedEffect(hunter, 'meteorfall');
       if (meteorfall > 0) damage = baseDamage + (damage - baseDamage) * (1 + meteorfall);
+      // Crescendo (Fateweaver Lute): Encore-buffed hunters deal +25% skill
+      // damage when a crescendo Bard plays within 6 cells.
+      if ((hunter.encoreTimer ?? 0) > 0) {
+        let crescendo = 0;
+        for (const h of this.hunters) {
+          if (h.hp <= 0 || h.charClass !== 'Bard') continue;
+          if (gridDistance(h.gx, h.gy, hunter.gx, hunter.gy) > 6) continue;
+          const v = this.equippedEffect(h, 'crescendo');
+          if (v > crescendo) crescendo = v;
+        }
+        if (crescendo > 0) damage = baseDamage + (damage - baseDamage) * (1 + crescendo);
+      }
 
       // Usage-based mastery: flat + CD bonus (longer CD = more EXP).
       // Gray prey teaches nothing (matches 0 hunter EXP on gray).
@@ -2133,13 +2249,14 @@ export class GameSimulation {
         targetY: monster.gy,
         duration: 0.5,
         elapsed: 0,
-        color: readySkill.effectType === 'meteor' ? '#ea580c' : (readySkill.effectType === 'smite' ? '#facc15' : '#38bdf8')
+        color: readySkill.effectType === 'meteor' ? '#ea580c' : (readySkill.effectType === 'smite' ? '#facc15' : (readySkill.effectType === 'ballad' || readySkill.effectType === 'encore') ? '#2dd4bf' : '#38bdf8')
       });
 
       // Play matching audio
       if (readySkill.effectType === 'meteor') soundFx.playMagic();
       else if (readySkill.effectType === 'smite') soundFx.playSmite();
       else if (readySkill.effectType === 'multishot') soundFx.playArrow();
+      else if (readySkill.effectType === 'ballad' || readySkill.effectType === 'encore') soundFx.playLute();
       else soundFx.playSlash();
 
       this.addFloatingText(`⚡ ${readySkill.name}!`, hunter.gx, hunter.gy - 0.5, '#38bdf8', 11);
@@ -2149,10 +2266,21 @@ export class GameSimulation {
       if (hunter.charClass === 'Paladin' && readySkill.effectType === 'smite') {
         this.applyPaladinTankEffect(hunter, readySkill);
       }
+      // Golden Finale: damaging encore also kindles Gold Fever (+10% gold, 15s)
+      // on nearby allies (including the Bard).
+      if (readySkill.effectType === 'encore' && (readySkill.damageMultiplier ?? 0) > 0) {
+        for (const h of this.hunters) {
+          if (h.hp <= 0) continue;
+          if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) continue;
+          h.goldFeverTimer = Math.max(h.goldFeverTimer ?? 0, 15);
+        }
+        this.addFloatingText(`🎵 Gold Fever!`, hunter.gx, hunter.gy - 1.1, '#fbbf24', 11);
+      }
     } else {
       // Standard attack
       if (hunter.charClass === 'Ranger') soundFx.playArrow();
       else if (hunter.charClass === 'Sorcerer') soundFx.playMagic();
+      else if (hunter.charClass === 'Bard') soundFx.playLute();
       else soundFx.playSlash();
     }
 
@@ -2203,11 +2331,19 @@ export class GameSimulation {
   }
 
   private classWeaponNoun(charClass: CharacterClass): string {
-    return charClass === 'Berserker' ? 'Cleaver' : charClass === 'Ranger' ? 'Bow' : charClass === 'Sorcerer' ? 'Staff' : 'Gavel';
+    if (charClass === 'Berserker') return 'Cleaver';
+    if (charClass === 'Ranger') return 'Bow';
+    if (charClass === 'Sorcerer') return 'Staff';
+    if (charClass === 'Bard') return 'Lute';
+    return 'Gavel';
   }
 
   private classArmorNoun(charClass: CharacterClass): string {
-    return charClass === 'Berserker' ? 'Plate' : charClass === 'Ranger' ? 'Garb' : charClass === 'Sorcerer' ? 'Robe' : 'Aegis';
+    if (charClass === 'Berserker') return 'Plate';
+    if (charClass === 'Ranger') return 'Garb';
+    if (charClass === 'Sorcerer') return 'Robe';
+    if (charClass === 'Bard') return 'Cloak';
+    return 'Aegis';
   }
 
   private buildStatGear(tier: number, rarity: EquipmentRarity, slot: 'weapon' | 'armor', forClass: CharacterClass, monster: Monster): ItemDrop {
@@ -2372,6 +2508,11 @@ export class GameSimulation {
         this.addFloatingText(`💜 EPIC DROP: ${gearDrop.name}!`, monster.gx, monster.gy - 0.5, rarityHex('Epic'), 14);
         this.addLog('boss', `${hunter.name} looted EPIC ${gearDrop.name} from ${monster.name}!`, hunter.name);
       }
+    }
+
+    // Bard Gold Fever: killer with an active Golden Finale aura earns +10% gold.
+    if ((hunter.goldFeverTimer ?? 0) > 0) {
+      goldTotal = Math.round(goldTotal * 1.1);
     }
 
     if (dropTotals.length > 0 || goldTotal > 0 || expTotal > 0) {
@@ -3860,6 +4001,10 @@ export class GameSimulation {
         if (typeof h.tonics !== 'number' || !Number.isFinite(h.tonics)) h.tonics = 0;
         if (typeof h.tonicBoost !== 'number' || !Number.isFinite(h.tonicBoost)) h.tonicBoost = 0;
         if (typeof h.tonicBoostTimer !== 'number' || !Number.isFinite(h.tonicBoostTimer)) h.tonicBoostTimer = 0;
+        // Bard Encore / Gold Fever migration (old saves lack these buffs)
+        if (typeof h.encoreBoost !== 'number' || !Number.isFinite(h.encoreBoost)) h.encoreBoost = 0;
+        if (typeof h.encoreTimer !== 'number' || !Number.isFinite(h.encoreTimer)) h.encoreTimer = 0;
+        if (typeof h.goldFeverTimer !== 'number' || !Number.isFinite(h.goldFeverTimer)) h.goldFeverTimer = 0;
         if (typeof h.deaths !== 'number' || !Number.isFinite(h.deaths)) h.deaths = 0;
         // Drop legacy generic skillPoints (now usage-based per-skill EXP).
         if ('skillPoints' in (h as unknown as Record<string, unknown>)) delete (h as unknown as Record<string, unknown>).skillPoints;
@@ -3912,6 +4057,7 @@ export class GameSimulation {
                 else if (h.charClass === 'Sorcerer') base = 2.2 + tier * 0.5;
                 else if (h.charClass === 'Paladin') base = tier === 2 ? 1.2 : 1.7 + tier * 0.35;
                 else if (h.charClass === 'Cleric') base = 2.0 + tier * 0.4;
+                else if (h.charClass === 'Bard') base = tier === 1 ? 1.4 + tier * 0.3 : tier === 2 ? 0 : 2.0 + tier * 0.4;
               }
               if (base !== null) {
                 skill.damageMultiplier = base + 0.3 * (clamped - 1);
