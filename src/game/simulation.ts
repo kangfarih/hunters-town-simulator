@@ -170,6 +170,8 @@ export class GameSimulation {
   // of the last field rescue. Bounded by town capacity (hunters are never
   // removed, only retrained), so no pruning needed.
   private lastPartyRescue: Map<string, number> = new Map();
+  // Whirl slow: per-hunter spin burst mirroring the renderer whirl (0.9s tail). // Whirl slow:
+  private whirlSlow: Map<string, { burst: number; lastZoneId: string | null }> = new Map(); // Whirl slow:
 
   // Kill-switch for saving (used by Reset World so the pagehide
   // autosave doesn't resurrect the cleared save during reload)
@@ -999,6 +1001,8 @@ export class GameSimulation {
       hunter.shieldHp = 0;
     }
 
+    this.syncWhirlSlow(hunter, dt); // Whirl slow:
+
     // Field parties are field-only: any town state dissolves membership.
     if (hunter.partyId && (hunter.state === 'RETURNING_TO_TOWN' ||
         hunter.state === 'SELLING_LOOT' || hunter.state === 'UPGRADING_GEAR' ||
@@ -1053,7 +1057,7 @@ export class GameSimulation {
         // Proximity counts as arrival: hunter-hunter separation jitter can
         // hold a queue just outside moveTowards snap range (~0.04) while
         // still well within door range (0.8).
-        const arrived = this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, hunter.speed * 60 * dt)
+        const arrived = this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, this.effectiveMoveSpeed(hunter) * 60 * dt) // Whirl slow:
           || gridDistance(hunter.gx, hunter.gy, hunter.targetGx, hunter.targetGy) < 0.8;
         if (arrived) {
           const hall = this.buildings.find(b => b.type === 'TOWN_HALL');
@@ -1069,7 +1073,7 @@ export class GameSimulation {
       case 'TRAVELING_TO_HUNT': {
         // Move towards the nearest town gate, then choose hunting field.
         // Proximity counts as arrival (see REGISTERING: separation jitter).
-        const reachedGate = this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, hunter.speed * 60 * dt)
+        const reachedGate = this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, this.effectiveMoveSpeed(hunter) * 60 * dt) // Whirl slow:
           || gridDistance(hunter.gx, hunter.gy, hunter.targetGx, hunter.targetGy) < 0.8;
         if (reachedGate) {
           // Fair fight first, gear up second, desperate brawl last resort
@@ -1147,7 +1151,7 @@ export class GameSimulation {
               // Field truly empty: idle wander
               hunter.targetGx = 42 + Math.random() * 10;
               hunter.targetGy = 26 + Math.random() * 10;
-              this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, hunter.speed * 40 * dt);
+              this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, this.effectiveMoveSpeed(hunter) * 40 * dt); // Whirl slow:
               break;
             }
           }
@@ -1161,7 +1165,7 @@ export class GameSimulation {
         if (dist <= attackRange) {
           hunter.state = 'FIGHTING';
         } else {
-          this.moveTowards(hunter, monster.gx, monster.gy, hunter.speed * 60 * dt);
+          this.moveTowards(hunter, monster.gx, monster.gy, this.effectiveMoveSpeed(hunter) * 60 * dt); // Whirl slow:
         }
         break;
       }
@@ -1256,7 +1260,7 @@ export class GameSimulation {
         // Move towards town gate first. Proximity counts as arrival (see
         // REGISTERING: separation jitter); targetGx/Gy is the building door
         // when building-targeted, so this matches the < 0.8 door check.
-        const reached = this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, hunter.speed * 60 * dt)
+        const reached = this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, this.effectiveMoveSpeed(hunter) * 60 * dt) // Whirl slow:
           || gridDistance(hunter.gx, hunter.gy, hunter.targetGx, hunter.targetGy) < 0.8;
         if (reached) {
           // Head to designated target building
@@ -1366,7 +1370,7 @@ export class GameSimulation {
         // never enter town, and monster AI only engages HUNTING/FIGHTING).
         // On the 12s wait budget expiring with no match, march out SOLO
         // and start the 90s re-queue cooldown so seekers can't spin.
-        this.moveTowards(hunter, 29, 29, hunter.speed * 60 * dt);
+        this.moveTowards(hunter, 29, 29, this.effectiveMoveSpeed(hunter) * 60 * dt); // Whirl slow:
         hunter.stateTimer -= dt;
         if (hunter.stateTimer <= 0) {
           hunter.lfpCooldown = 90;
@@ -1446,9 +1450,44 @@ export class GameSimulation {
     return hunter.critRate + this.equippedEffect(hunter, 'deadeye');
   }
 
-  /** Effective attack speed after Swiftwind (Windstalker). Movement uses base speed. */
+  /** Effective attack speed after Swiftwind (Windstalker). Movement resolves via effectiveMoveSpeed. */
   public effectiveSpeed(hunter: Hunter): number {
     return hunter.speed + this.equippedEffect(hunter, 'swiftwind');
+  }
+
+  /** Whirl slow: sync the spin-burst mirror (same inside-own-storm / 0.9s burst window as the renderer spin). // Whirl slow: */
+  private syncWhirlSlow(hunter: Hunter, dt: number): void { // Whirl slow:
+    const ownStorms = this.activeZones.filter(z => z.kind === 'storm' && z.sourceId === hunter.id); // Whirl slow:
+    const hasStorm = ownStorms.length > 0; // Whirl slow:
+    const newestStormId = hasStorm ? ownStorms[ownStorms.length - 1].id : null; // Whirl slow:
+    let w = this.whirlSlow.get(hunter.id); // Whirl slow:
+    if (!w) { w = { burst: 0, lastZoneId: null }; this.whirlSlow.set(hunter.id, w); } // Whirl slow:
+    if (newestStormId && newestStormId !== w.lastZoneId) { w.burst = 0.9; w.lastZoneId = newestStormId; } // Whirl slow:
+    if (!hasStorm) { w.lastZoneId = null; } // Whirl slow:
+    const insideOwnStorm = hasStorm && ownStorms.some(z => gridDistance(hunter.gx, hunter.gy, z.x, z.y) <= z.radius + 0.75); // Whirl slow:
+    if (insideOwnStorm) { w.burst = 0.9; } else if (w.burst > 0) { w.burst = Math.max(0, w.burst - dt); } // Whirl slow:
+    if (!hasStorm && w.burst <= 0) { this.whirlSlow.delete(hunter.id); } // Whirl slow:
+  }
+
+  /** Whirl slow: true under the exact spin condition (own storm live + inside it or inside the 0.9s burst tail). // Whirl slow: */
+  public isWhirling(hunter: Hunter): boolean { // Whirl slow:
+    const ownStorms = this.activeZones.filter(z => z.kind === 'storm' && z.sourceId === hunter.id); // Whirl slow:
+    if (ownStorms.length === 0) return false; // Whirl slow:
+    const w = this.whirlSlow.get(hunter.id); // Whirl slow:
+    const burst = w ? w.burst : 0; // Whirl slow:
+    const inside = ownStorms.some(z => gridDistance(hunter.gx, hunter.gy, z.x, z.y) <= z.radius + 0.75); // Whirl slow:
+    return inside || burst > 0; // Whirl slow:
+  }
+
+  /** Whirl slow: movement speed resolves here (x0.7 while whirling). Town states never slow so it can't persist off-field. // Whirl slow: */
+  public effectiveMoveSpeed(hunter: Hunter): number { // Whirl slow:
+    switch (hunter.state) { // Whirl slow:
+      case 'WANDERING_TOWN': case 'LOOKING_FOR_PARTY': case 'SELLING_LOOT': case 'UPGRADING_GEAR': // Whirl slow:
+      case 'LEARNING_SKILL': case 'BREWING_ELIXIR': case 'RECOVERING_CLINIC': case 'RESTING_TAVERN': // Whirl slow:
+      case 'SPAWNING': case 'REGISTERING': return hunter.speed; // Whirl slow:
+      default: break; // Whirl slow:
+    }
+    return this.isWhirling(hunter) ? hunter.speed * 0.7 : hunter.speed; // Whirl slow:
   }
 
   /** Effective skill cooldown after Focus (Astral Veil). */
@@ -1954,18 +1993,37 @@ export class GameSimulation {
         }
       }
 
-      // Spawn skill VFX animation
-      this.skillVfxs.push({
-        id: `vfx-${Date.now()}-${Math.random()}`,
-        type: readySkill.effectType,
-        startX: hunter.gx,
-        startY: hunter.gy,
-        targetX: monster.gx,
-        targetY: monster.gy,
-        duration: 0.5,
-        elapsed: 0,
-        color: readySkill.effectType === 'meteor' ? '#ea580c' : (readySkill.effectType === 'smite' ? '#facc15' : (readySkill.effectType === 'ballad' || readySkill.effectType === 'encore') ? '#2dd4bf' : '#38bdf8')
-      });
+      // Spawn skill VFX animation. Quick Shot (multishot) fires a sequential
+      // volley: 3 arrows staggered ~100ms apart along the flight path via
+      // short-lived VFX with elapsed spawn-delay offsets — not one burst.
+      if (readySkill.effectType === 'multishot') {
+        const vfxColor = '#38bdf8';
+        for (let volley = 0; volley < 3; volley++) {
+          this.skillVfxs.push({
+            id: `vfx-${Date.now()}-${Math.random()}-vol${volley}`,
+            type: readySkill.effectType,
+            startX: hunter.gx,
+            startY: hunter.gy,
+            targetX: monster.gx,
+            targetY: monster.gy,
+            duration: 0.5,
+            elapsed: -0.1 * volley,
+            color: vfxColor,
+          });
+        }
+      } else {
+        this.skillVfxs.push({
+          id: `vfx-${Date.now()}-${Math.random()}`,
+          type: readySkill.effectType,
+          startX: hunter.gx,
+          startY: hunter.gy,
+          targetX: monster.gx,
+          targetY: monster.gy,
+          duration: 0.5,
+          elapsed: 0,
+          color: readySkill.effectType === 'meteor' ? '#ea580c' : (readySkill.effectType === 'smite' ? '#facc15' : (readySkill.effectType === 'ballad' || readySkill.effectType === 'encore') ? '#2dd4bf' : '#38bdf8')
+        });
+      }
 
       // Play matching audio
       if (readySkill.effectType === 'meteor') soundFx.playMagic();

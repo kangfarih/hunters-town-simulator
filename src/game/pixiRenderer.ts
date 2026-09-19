@@ -776,11 +776,12 @@ export class PixiRenderer {
   }
 
   /**
-   * Skill-zone layer (below sprites): one soft ground disc per ActiveZone.
-   * No border rings — readability comes from the translucent fill plus the
-   * per-kind tick motifs (storm arcs, burn core, volley ticks, cross, motes,
-   * hymn orbit). Fixed zones sit static with a pulse; auras ride the caster
-   * (sim already re-anchors x/y). Everything fades out over the last 1s.
+   * Skill-zone layer (below sprites): soft ground discs for most kinds, but
+   * the Berserker storm is particle-only (no beams, no solid discs) — just
+   * spinning arc slashes + dust motes around the whirling hunter. Ranger
+   * arrows rain DOWN vertically (falling shafts, fading on ground impact).
+   * Fixed zones sit static with a pulse; auras ride the caster (sim already
+   * re-anchors x/y). Everything fades out over the last 1s.
    */
   private renderZones() {
     this.zoneContainer.removeChildren();
@@ -799,29 +800,52 @@ export class PixiRenderer {
       const g = new Graphics();
       const cy = p.y + 10;
 
-      // Soft ground fill only (no ring strokes): layered translucent discs
-      // give a radial feel; kind-specific motifs below carry the readout.
-      g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.14 + 0.06 * pulse) * fade });
-      g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
+      // Soft ground fill for non-storm kinds (no ring strokes): layered
+      // translucent discs give a radial feel; kind motifs carry the readout.
+      // Storm is particle-only — no beams, no solid discs.
+      if (z.kind !== 'storm') {
+        g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.14 + 0.06 * pulse) * fade });
+        g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
+      }
 
       if (z.kind === 'storm') {
-        // Spinning cyclone arcs.
-        const rot = z.elapsed * 3;
+        // Particle-only whirlwind: spinning arc slashes (slash-texture
+        // white/red palette, whirlwind-cyclone rhythm) + drifting dust
+        // motes. No vertical beams, no filled discs.
+        const rot = z.elapsed * 5;
+        const slashColors = [0xf8fafc, 0xef4444, 0xe0f2fe];
         for (let a = 0; a < 3; a++) {
           const ang = rot + (a / 3) * Math.PI * 2;
-          g.arc(p.x, cy, rx * 0.45, ang, ang + Math.PI * 0.7).stroke({ color: 0xe0f2fe, width: 2, alpha: 0.8 * fade });
+          g.arc(p.x, cy - 8, rx * 0.5, ang, ang + Math.PI * 0.6).stroke({ color: slashColors[a % 3], width: 3, alpha: 0.85 * fade });
+        }
+        // Dust motes kicked up around the whirling hunter.
+        for (let m = 0; m < 6; m++) {
+          const orbit = z.elapsed * 2.2 + m * (Math.PI * 2 / 6);
+          const frac = 0.45 + 0.35 * ((m * 37 % 10) / 10);
+          const mx = p.x + Math.cos(orbit) * rx * frac;
+          const my = cy - 6 + Math.sin(orbit) * ry * frac - ((m * 13 % 7));
+          g.circle(mx, my, 2).fill({ color: m % 2 === 0 ? 0xd6c9a8 : 0x94a3b8, alpha: 0.55 * fade });
         }
       } else if (z.kind === 'burn') {
         // Flickering ember core.
         const flicker = 0.6 + 0.4 * Math.abs(Math.sin(z.elapsed * 9 + 1));
         g.ellipse(p.x, cy, rx * 0.45, ry * 0.45).fill({ color: 0xfacc15, alpha: 0.35 * flicker * fade });
       } else if (z.kind === 'arrows') {
-        // Volley ring: small impact ticks around the rim.
-        for (let a = 0; a < 8; a++) {
-          const ang = (a / 8) * Math.PI * 2;
-          const dx = Math.cos(ang) * rx * 0.8;
-          const dy = Math.sin(ang) * ry * 0.8;
-          g.rect(p.x + dx - 1, cy + dy - 3, 2, 6).fill({ color: 0xbbf7d0, alpha: 0.7 * fade });
+        // Rain of Arrows: shafts fall straight DOWN above random points
+        // inside the radius and fade on ground impact, continuously while
+        // the zone lives. No horizontal flight, no rim blink.
+        const FALL_N = 7;
+        for (let i = 0; i < FALL_N; i++) {
+          const u = ((i * 0.61803398875) % 1 + 1) % 1; // deterministic spread
+          const ax = p.x + (u * 2 - 1) * rx * 0.75;
+          const fall = ((z.elapsed * 1.4 + i * 0.23) % 1 + 1) % 1;
+          const ay = cy - 52 + fall * 54; // sky -> ground
+          const impactFade = fall > 0.85 ? Math.max(0, (1 - fall) / 0.15) : 1;
+          const alpha = 0.9 * impactFade * fade;
+          if (alpha <= 0.01) continue;
+          // Shaft + down-pointing head.
+          g.rect(ax - 1, ay - 9, 2, 8).fill({ color: 0xd9f99d, alpha });
+          g.rect(ax - 2, ay - 2, 4, 3).fill({ color: 0x22c55e, alpha });
         }
       } else if (z.kind === 'consecration') {
         // Holy cross marker at the anchor.
@@ -1130,6 +1154,9 @@ export class PixiRenderer {
     this.vfxContainer.removeChildren();
 
     this.simulation.skillVfxs.forEach(vfx => {
+      // Staggered volley chains spawn with negative elapsed as a spawn
+      // delay — pending arrows stay hidden until their offset elapses.
+      if (vfx.elapsed < 0) return;
       const startScreen = gridToScreen(vfx.startX, vfx.startY);
       const targetScreen = gridToScreen(vfx.targetX, vfx.targetY);
       const dx = targetScreen.x - startScreen.x;
@@ -1154,13 +1181,22 @@ export class PixiRenderer {
       sprite.alpha = fade;
 
       if (vfx.type === 'multishot') {
-        // Arrows fly point-first along the flight path (texture points up,
-        // so rotate up-vector onto the flight direction)
-        const t = progress; // near-linear: arrows are fast
-        sprite.x = startScreen.x + dx * t;
-        sprite.y = startScreen.y + dy * t;
-        sprite.rotation = flightAngle + Math.PI / 2;
-        sprite.scale.set(0.9 + pop * 0.3);
+        // Zone ticks/casts pin start==target: arrows rain DOWN vertically
+        // (texture points up, so PI faces them down) instead of flying
+        // sideways. Direct casts fly point-first along the flight path.
+        const travel = Math.hypot(dx, dy);
+        if (travel < 2) {
+          sprite.x = targetScreen.x;
+          sprite.y = targetScreen.y - 12 - progress * 8;
+          sprite.rotation = Math.PI;
+          sprite.scale.set(0.9 + pop * 0.3);
+        } else {
+          const t = progress; // near-linear: arrows are fast
+          sprite.x = startScreen.x + dx * t;
+          sprite.y = startScreen.y + dy * t;
+          sprite.rotation = flightAngle + Math.PI / 2;
+          sprite.scale.set(0.9 + pop * 0.3);
+        }
       } else if (vfx.type === 'meteor') {
         // Fireball arcs from sky to target, swelling on impact
         const t = 1 - Math.pow(1 - progress, 2); // ease-out: fast launch
