@@ -16,6 +16,8 @@ export type {
   Equipment,
   Skill,
   SkillEffectType,
+  ActiveZone,
+  ZoneKind,
   ItemDrop,
   FloatingText,
   SkillVFX,

@@ -15,25 +15,26 @@ export const BerserkerKit: ClassKit = {
       idPrefix: 'berserk',
       name: 'Cleave Slash',
       cooldownMs: 4000,
-      damageMultiplier: 2.2, // 1.8 + tier(1) * 0.4
+      damageMultiplier: 2.0,
       effectType: 'slash',
-      description: 'Strikes viciously in a wide arc dealing heavy physical damage.',
+      description: 'Spam strike in a wide arc dealing 200% slash damage.',
     },
     {
       idPrefix: 'berserk',
-      name: 'Whirlwind',
-      cooldownMs: 4000,
-      damageMultiplier: 2.6, // 1.8 + tier(2) * 0.4
+      name: 'Whirlwind Storm',
+      cooldownMs: 9000,
+      damageMultiplier: 1.0,
       effectType: 'whirlwind',
-      description: 'Strikes viciously in a wide arc dealing heavy physical damage.',
+      description: 'Conjures a fixed storm zone (r3, 4s) shredding foes for ~40% ATK each second.',
+      zone: { kind: 'storm', radius: 3, durationSec: 4, tickFrac: 0.40 },
     },
     {
       idPrefix: 'berserk',
-      name: 'Rage Berserk',
-      cooldownMs: 4000,
-      damageMultiplier: 3.0, // 1.8 + tier(3) * 0.4
+      name: 'Rage Execute',
+      cooldownMs: 14000,
+      damageMultiplier: 3.8,
       effectType: 'slash',
-      description: 'Strikes viciously in a wide arc dealing heavy physical damage.',
+      description: 'Executes with apocalyptic fury dealing 380% slash damage.',
     },
   ],
 };

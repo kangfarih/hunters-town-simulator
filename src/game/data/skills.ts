@@ -33,6 +33,13 @@ export function createClassSkill(charClass: CharacterClass, tier: number): Skill
   };
 }
 
+/** Tier (1-3) parsed from the skill id suffix (`skill-<prefix>-<tier>`). */
+export function skillTier(skill: Pick<Skill, 'id'>): number {
+  const m = /-(\d+)\s*$/.exec(typeof skill.id === 'string' ? skill.id : '');
+  const t = m ? parseInt(m[1], 10) : NaN;
+  return t >= 1 && t <= 3 ? t : 1;
+}
+
 /** Gold cost of an Academy promotion for a skill at this level. */
 export function academyCostFor(skillLevel: number): number {
   return 40 + 25 * skillLevel;

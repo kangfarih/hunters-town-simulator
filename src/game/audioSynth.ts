@@ -1,6 +1,8 @@
 // Retro 16-bit Chiptune Audio Synthesizer using Web Audio API
 // Autonomous spectator friendly: soft, non-intrusive sound effects with volume control and mute toggle.
 
+import type { ZoneKind } from './types/zone';
+
 class AudioSynth {
   private ctx: AudioContext | null = null;
   public isMuted: boolean = false;
@@ -96,6 +98,21 @@ class AudioSynth {
   public playSmite() {
     if (this.isMuted) return;
     this.playTone(523.25, 783.99, 0.25, 'triangle', 0.18);
+  }
+
+  // 5d. Zone tick: one quiet blip per global zone-tick batch (gain ~0.06).
+  public playZoneTick(kind: ZoneKind) {
+    if (this.isMuted) return;
+    const freqs: Record<ZoneKind, [number, number]> = {
+      storm: [520, 320],
+      arrows: [920, 620],
+      burn: [240, 520],
+      consecration: [620, 820],
+      radiance: [700, 940],
+      hymn: [660, 880],
+    };
+    const [a, b] = freqs[kind] ?? [440, 560];
+    this.playTone(a, b, 0.12, 'sine', 0.06);
   }
 
   // 6. Level Up Fanfare

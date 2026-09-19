@@ -4,7 +4,7 @@ import {
   Package, Trophy, Eye, ArrowUpCircle, Compass 
 } from 'lucide-react';
 import { Hunter } from '../types';
-import { partyColor, epicEffectDescription, SKILL_EXP_TO_NEXT, rarityTextClass, rarityBorderClass } from '../game/simulation';
+import { partyColor, epicEffectDescription, SKILL_EXP_TO_NEXT, rarityTextClass, rarityBorderClass, skillZoneBlurb } from '../game/simulation';
 
 interface HeroInspectorProps {
   hunter: Hunter;
@@ -343,6 +343,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
               const need = typeof skill.expToNext === 'number' ? skill.expToNext : SKILL_EXP_TO_NEXT;
               const pct = Math.max(0, Math.min(100, (cur / Math.max(1, need)) * 100));
               const ready = skill.level < skill.maxLevel && cur >= need;
+              const zoneBlurb = skillZoneBlurb(hunter.charClass, skill);
               return (
               <div key={skill.id} className="p-2 rounded-lg bg-slate-800/80 border border-slate-700/60">
                 <div className="flex items-center justify-between">
@@ -357,7 +358,11 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
                 </div>
                 <div className="text-[9px] text-slate-500 font-mono mt-1 flex justify-between">
                   <span>EXP {Math.floor(cur)}/{need}{ready ? ` · promote ${40 + 25 * skill.level}g` : ''}</span>
-                  <span>Dmg: {Math.round(skill.damageMultiplier * 100)}%</span>
+                  {zoneBlurb ? (
+                    <span className="text-teal-300">{zoneBlurb}</span>
+                  ) : (
+                    <span>Dmg: {Math.round(skill.damageMultiplier * 100)}%</span>
+                  )}
                   <span>CD: {skill.cooldownMs / 1000}s</span>
                 </div>
               </div>

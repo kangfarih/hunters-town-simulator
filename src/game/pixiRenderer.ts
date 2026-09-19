@@ -13,6 +13,7 @@ import {
   createAnvilTexture, createVatTexture, createTrainingDummyTexture
 } from './pixelArtTextures';
 import { CharacterClass, Hunter, Building } from '../types';
+import { zoneColor } from './types';
 
 export class PixiRenderer {
   public app: Application | null = null;
@@ -27,6 +28,7 @@ export class PixiRenderer {
   // Containers
   private worldContainer: Container = new Container();
   private terrainContainer: Container = new Container();
+  private zoneContainer: Container = new Container();
   private entitiesContainer: Container = new Container();
   private vfxContainer: Container = new Container();
   private overlayContainer: Container = new Container();
@@ -125,6 +127,7 @@ export class PixiRenderer {
 
       // Build scene graph
       this.worldContainer.addChild(this.terrainContainer);
+      this.worldContainer.addChild(this.zoneContainer);
       this.worldContainer.addChild(this.entitiesContainer);
       this.worldContainer.addChild(this.vfxContainer);
       this.worldContainer.addChild(this.overlayContainer);
@@ -179,7 +182,7 @@ export class PixiRenderer {
     });
 
     // Pre-cache VFX textures
-    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'heal', 'ballad', 'encore', 'impact', 'levelup'].forEach(v => {
+    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'heal', 'holy_burst', 'ballad', 'encore', 'impact', 'levelup'].forEach(v => {
       this.vfxTextures.set(v, createSkillVfxTexture(v));
     });
   }
@@ -329,6 +332,9 @@ export class PixiRenderer {
 
     // 1f. Render Academy Dummies
     this.renderAcademyStations();
+
+    // 1g. Render Skill Zones (ground discs below sprites)
+    this.renderZones();
 
     // 2. Render Hunters
     this.renderHunters();
@@ -766,6 +772,81 @@ export class PixiRenderer {
     }
   }
 
+  /**
+   * Skill-zone layer (below sprites): one ground disc per ActiveZone.
+   * Fixed zones sit static with a pulse; auras ride the caster (sim already
+   * re-anchors x/y). Bard hymn gets orbiting notes, storm a spin, burn a
+   * flicker, heals rising motes. Everything fades out over the last 1s.
+   */
+  private renderZones() {
+    this.zoneContainer.removeChildren();
+    const zones = this.simulation.activeZones;
+    if (!zones || zones.length === 0) return;
+
+    for (const z of zones) {
+      const p = gridToScreen(z.x, z.y);
+      const color = zoneColor(z.kind);
+      const fade = Math.min(1, Math.max(0, (z.duration - z.elapsed) / 1));
+      if (fade <= 0) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(z.elapsed * 4);
+      // Iso footprint: a cell spans 32px horizontally, 16px vertically.
+      const rx = z.radius * 32;
+      const ry = z.radius * 16;
+      const g = new Graphics();
+      const cy = p.y + 10;
+
+      // Ground disc + rim.
+      g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.16 + 0.08 * pulse) * fade });
+      g.ellipse(p.x, cy, rx, ry).stroke({ color, width: 2, alpha: 0.65 * fade });
+      g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).stroke({ color, width: 1, alpha: 0.35 * fade });
+
+      if (z.kind === 'storm') {
+        // Spinning cyclone arcs.
+        const rot = z.elapsed * 3;
+        for (let a = 0; a < 3; a++) {
+          const ang = rot + (a / 3) * Math.PI * 2;
+          g.arc(p.x, cy, rx * 0.45, ang, ang + Math.PI * 0.7).stroke({ color: 0xe0f2fe, width: 2, alpha: 0.8 * fade });
+        }
+      } else if (z.kind === 'burn') {
+        // Flickering ember core.
+        const flicker = 0.6 + 0.4 * Math.abs(Math.sin(z.elapsed * 9 + 1));
+        g.ellipse(p.x, cy, rx * 0.45, ry * 0.45).fill({ color: 0xfacc15, alpha: 0.35 * flicker * fade });
+      } else if (z.kind === 'arrows') {
+        // Volley ring: small impact ticks around the rim.
+        for (let a = 0; a < 8; a++) {
+          const ang = (a / 8) * Math.PI * 2;
+          const dx = Math.cos(ang) * rx * 0.8;
+          const dy = Math.sin(ang) * ry * 0.8;
+          g.rect(p.x + dx - 1, cy + dy - 3, 2, 6).fill({ color: 0xbbf7d0, alpha: 0.7 * fade });
+        }
+      } else if (z.kind === 'consecration') {
+        // Holy cross marker at the anchor.
+        g.rect(p.x - 2, cy - 14, 4, 28).fill({ color: 0xffffff, alpha: 0.55 * fade });
+        g.rect(p.x - 9, cy - 7, 18, 4).fill({ color: 0xffffff, alpha: 0.55 * fade });
+      } else if (z.kind === 'radiance' || z.kind === 'hymn') {
+        // Rising motes (heal): three dots looping upward.
+        for (let k = 0; k < 3; k++) {
+          const rise = ((z.elapsed * 22 + k * 14) % 30) / 30;
+          const mx = p.x + (k - 1) * rx * 0.3;
+          const my = cy - 4 - rise * 26;
+          g.circle(mx, my, 2.5).fill({ color: 0xffffff, alpha: (1 - rise) * 0.8 * fade });
+        }
+        if (z.kind === 'hymn') {
+          // Bard orbit: three notes circling the aura.
+          for (let k = 0; k < 3; k++) {
+            const ang = z.elapsed * 2 + (k / 3) * Math.PI * 2;
+            const ox = p.x + Math.cos(ang) * rx * 0.6;
+            const oy = cy + Math.sin(ang) * ry * 0.6 - 6;
+            g.circle(ox, oy, 3).fill({ color: 0xfbbf24, alpha: 0.9 * fade });
+          }
+        }
+      }
+
+      g.zIndex = (z.x + z.y) * 100 + 5;
+      this.zoneContainer.addChild(g);
+    }
+  }
+
   private renderHunters() {
     const activeHunterIds = new Set(this.simulation.hunters.map(h => h.id));
     // Leader ids derived once per frame from runtime parties (not per hunter).
@@ -1004,7 +1085,7 @@ export class PixiRenderer {
       // Per-effect pacing: arrows/slashes snap fast, pillars linger
       const pacing: Record<string, number> = {
         multishot: 0.65, slash: 0.7, impact: 0.8, heal: 1.0,
-        meteor: 1.0, whirlwind: 1.0, smite: 1.15, levelup: 1.2,
+        meteor: 1.0, whirlwind: 1.0, smite: 1.15, holy_burst: 1.15, levelup: 1.2,
         ballad: 0.9, encore: 1.0,
       };
       const visualDuration = vfx.duration * (pacing[vfx.type] ?? 1.0);
@@ -1043,6 +1124,12 @@ export class PixiRenderer {
         sprite.y = targetScreen.y - 18;
         sprite.scale.set(0.9 + pop * 0.3, 0.6 + progress * 0.9);
         sprite.alpha = fade * (0.75 + 0.25 * Math.sin(progress * 22));
+      } else if (vfx.type === 'holy_burst') {
+        // Renewing Dawn: gold pillar blooms on the caster with a green ring
+        sprite.x = startScreen.x;
+        sprite.y = startScreen.y - 20 - progress * 10;
+        sprite.scale.set(0.9 + pop * 0.5, 0.7 + progress * 0.9);
+        sprite.alpha = fade * (0.8 + 0.2 * Math.sin(progress * 16));
       } else if (vfx.type === 'slash') {
         // Energy arc snaps across the gap, edge-on to its path
         const t = 1 - Math.pow(1 - progress, 2);

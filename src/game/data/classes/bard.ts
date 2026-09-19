@@ -16,25 +16,26 @@ export const BardKit: ClassKit = {
       idPrefix: 'bard',
       name: 'Dissonant Chord',
       cooldownMs: 4000,
-      damageMultiplier: 1.7, // 1.4 + tier(1) * 0.3
+      damageMultiplier: 1.7,
       effectType: 'ballad',
-      description: 'Strums a jarring chord dealing sonic damage.',
+      description: 'Strums a jarring chord dealing 170% sonic damage.',
     },
     {
       idPrefix: 'bard',
-      name: 'Encore Anthem',
-      cooldownMs: 6000,
-      damageMultiplier: 0, // pure buff: no damage, handled by the Encore support path
+      name: 'Resonant Hymn',
+      cooldownMs: 10000,
+      damageMultiplier: 1.0,
       effectType: 'encore',
-      description: 'Sings an anthem buffing nearby allies +20% ATK for 8s.',
+      description: 'Sings a following hymn aura (r3, 5s) healing ~3% maxHp/s and refreshing Encore +20% ATK.',
+      zone: { kind: 'hymn', radius: 3, durationSec: 5, tickFrac: 0.0, hotMaxFrac: 0.03 },
     },
     {
       idPrefix: 'bard',
       name: 'Golden Finale',
-      cooldownMs: 8000,
-      damageMultiplier: 3.2, // 2.0 + tier(3) * 0.4
+      cooldownMs: 16000,
+      damageMultiplier: 3.2,
       effectType: 'encore',
-      description: 'Grand finale: sonic damage plus +10% gold fever for the party (15s).',
+      description: 'Grand finale: 320% sonic damage plus Gold Fever (+10% gold, 15s) for the party.',
     },
   ],
 };

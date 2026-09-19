@@ -15,25 +15,26 @@ export const SorcererKit: ClassKit = {
       idPrefix: 'sorc',
       name: 'Arcane Bolt',
       cooldownMs: 5000,
-      damageMultiplier: 2.7, // 2.2 + tier(1) * 0.5
+      damageMultiplier: 2.5,
       effectType: 'meteor',
-      description: 'Summons a blazing arcane meteor blasting all surrounding beasts.',
+      description: 'Spam arcane meteor dealing 250% blast damage.',
     },
     {
       idPrefix: 'sorc',
-      name: 'Meteor Strike',
-      cooldownMs: 5000,
-      damageMultiplier: 3.2, // 2.2 + tier(2) * 0.5
+      name: 'Meteor Burn',
+      cooldownMs: 10000,
+      damageMultiplier: 1.0,
       effectType: 'meteor',
-      description: 'Summons a blazing arcane meteor blasting all surrounding beasts.',
+      description: 'Ignites a fixed burn zone (r3, 6s) searing foes for ~50% ATK each second.',
+      zone: { kind: 'burn', radius: 3, durationSec: 6, tickFrac: 0.50 },
     },
     {
       idPrefix: 'sorc',
-      name: 'Solar Flare',
-      cooldownMs: 5000,
-      damageMultiplier: 3.7, // 2.2 + tier(3) * 0.5
+      name: 'Solar Cataclysm',
+      cooldownMs: 16000,
+      damageMultiplier: 4.5,
       effectType: 'meteor',
-      description: 'Summons a blazing arcane meteor blasting all surrounding beasts.',
+      description: 'Calls down the sun itself dealing 450% meteor damage.',
     },
   ],
 };

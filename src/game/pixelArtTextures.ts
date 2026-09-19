@@ -1297,6 +1297,29 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.fillRect(center - 8, center - 10, 2, 12);
     ctx.fillRect(center + 3, center - 18, 2, 10);
     ctx.fillRect(center + 11, center - 4, 2, 10);
+  } else if (type === 'holy_burst') {
+    // Renewing Dawn: gold pillar (party burst) wrapped in a green healing ring
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';
+    ctx.fillRect(center - 5, 4, 10, size - 8);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(center - 2, 4, 4, size - 8);
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(center, center + 6, 20, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(253, 224, 71, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center, center + 6, 26, 0, Math.PI * 2);
+    ctx.stroke();
+    // Rising healing sparks
+    ctx.fillStyle = '#f0fdf4';
+    ctx.fillRect(center - 12, 8, 3, 3);
+    ctx.fillRect(center + 8, 16, 3, 3);
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(center - 4, 24, 2, 2);
+    ctx.fillRect(center + 3, 6, 2, 2);
   } else if (type === 'levelup') {
     // Level-up burst: gold pillar + expanding ring + rising sparks
     ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';

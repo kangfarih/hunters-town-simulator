@@ -1,7 +1,8 @@
 import {
   Hunter, Monster, Building, FloatingText, SkillVFX, GameLog,
   CharacterClass, ItemDrop, Equipment, Skill,
-  MaterialStock, MaterialType, EquipmentRarity, EquipmentEffectId
+  MaterialStock, MaterialType, EquipmentRarity, EquipmentEffectId,
+  ActiveZone, ZoneKind, isSupportZone, zoneTickVfx, zoneCastVfx
 } from './types';
 import { gridDistance, getIsometricFacing } from './isometric';
 import { findPath, PathPoint, reserveAt } from './pathfinding';
@@ -23,12 +24,14 @@ import {
   partyColor as dataPartyColor,
   difficultyMultipliers as dataDifficultyMultipliers,
   PLAYABLE_CLASSES,
+  CLASS_KITS,
   baseStatsFor as dataBaseStatsFor,
   classWeaponNoun as dataClassWeaponNoun,
   classArmorNoun as dataClassArmorNoun,
   SKILL_EXP_TO_NEXT as DATA_SKILL_EXP_TO_NEXT,
   createClassSkill as dataCreateClassSkill,
   skillExpPerCast,
+  skillTier,
   academyCostFor,
   readySkills,
   hasAffordableReadySkill,
@@ -124,6 +127,8 @@ export class GameSimulation {
   public buildings: Building[] = [];
   public floatingTexts: FloatingText[] = [];
   public skillVfxs: SkillVFX[] = [];
+  // Skill-zone revamp: persistent T2 battlefield zones (runtime-only, never saved).
+  public activeZones: ActiveZone[] = [];
   public logs: GameLog[] = [];
 
   // Town material stock: loot sold at the Trading Post becomes forge/brew stock.
@@ -875,6 +880,9 @@ export class GameSimulation {
       this.updateHunterAI(this.hunters[i], effectiveDt);
     }
 
+    // 3b. Update skill zones (T2): ticks after hunters move, before monsters act.
+    this.updateZones(effectiveDt);
+
     // Hunter-hunter separation: minimal hard-contact de-overlap so dogpiles,
     // marching clumps, and door queues keep personal space. Hunters only
     // (not monsters), all states; only true overlaps (d < 0.25) are touched
@@ -1488,11 +1496,12 @@ export class GameSimulation {
   }
 
   /**
-   * Paladin tank effect on smite cast: raises an absorb shield and (T2/T3)
-   * taunts nearby beasts onto the Paladin. Shield scales +5% maxHp per
-   * skill rank above 1 so Academy promotions thicken the bulwark.
-   * Taunt radius 6, duration 4s (Aegis) / 5s (Judgement) — always shorter
-   * than the skill CD so bosses can't be perma-locked.
+   * Paladin tank effect on T1/T3 smite casts: raises an absorb shield and
+   * (T3 Judgement) taunts nearby beasts onto the Paladin. Shield scales +5%
+   * maxHp per skill rank above 1 so Academy promotions thicken the bulwark.
+   * Taunt radius 6, duration 5s (Judgement) — always shorter than the skill
+   * CD so bosses can't be perma-locked. (T2 Consecrated Aura routes to
+   * castT2Zone before reaching here, so there is no tier-2 branch.)
    */
   private applyPaladinTankEffect(hunter: Hunter, skill: Skill) {
     const tierMatch = /-(\d+)\s*$/.exec(typeof skill.id === 'string' ? skill.id : '');
@@ -1502,11 +1511,7 @@ export class GameSimulation {
     let shieldFrac = 0.30;
     let shieldSecs = 6;
     let tauntSecs = 0;
-    if (tier === 2) {
-      shieldFrac = 0.60;
-      shieldSecs = 8;
-      tauntSecs = 4;
-    } else if (tier >= 3) {
+    if (tier >= 3) {
       shieldFrac = 0.45;
       shieldSecs = 7;
       tauntSecs = 5;
@@ -1516,21 +1521,261 @@ export class GameSimulation {
     hunter.shieldTimer = Math.max(hunter.shieldTimer ?? 0, shieldSecs);
     this.addFloatingText(`🛡️ Aegis +${shield}`, hunter.gx, hunter.gy - 0.5, '#93c5fd', 12);
     if (tauntSecs > 0) {
-      let taunted = 0;
-      for (const m of this.monsters) {
-        if (m.hp <= 0) continue;
-        if (gridDistance(hunter.gx, hunter.gy, m.gx, m.gy) > 6) continue;
-        m.tauntHunterId = hunter.id;
-        m.tauntTimer = tauntSecs;
-        m.state = 'COMBAT';
-        m.targetHunterId = hunter.id;
-        taunted++;
+      this.tauntMonsters(hunter, tauntSecs, skill.name);
+    }
+  }
+
+  /**
+   * Taunt nearby beasts (radius 6) onto the hunter for `secs` sim-seconds.
+   * Shared by Paladin smites and the Consecrated Aura T2 zone cast.
+   */
+  private tauntMonsters(hunter: Hunter, secs: number, skillName: string) {
+    let taunted = 0;
+    for (const m of this.monsters) {
+      if (m.hp <= 0) continue;
+      if (gridDistance(hunter.gx, hunter.gy, m.gx, m.gy) > 6) continue;
+      m.tauntHunterId = hunter.id;
+      m.tauntTimer = secs;
+      m.state = 'COMBAT';
+      m.targetHunterId = hunter.id;
+      taunted++;
+    }
+    if (taunted > 0) {
+      this.addFloatingText(`😡 Taunt! (${taunted})`, hunter.gx, hunter.gy - 1.1, '#f87171', 12);
+      this.addLog('combat', `${hunter.name} taunts ${taunted} beast${taunted > 1 ? 's' : ''} with ${skillName}!`, hunter.name);
+    }
+  }
+
+  /**
+   * Usage-based skill mastery: flat + CD bonus (longer CD = more EXP).
+   * Callers apply gray gating (damage) or skip it (support).
+   */
+  private grantSkillMastery(hunter: Hunter, skill: Skill) {
+    if (skill.level >= skill.maxLevel) return;
+    const curExp = typeof skill.exp === 'number' && Number.isFinite(skill.exp) ? skill.exp : 0;
+    const need = typeof skill.expToNext === 'number' && Number.isFinite(skill.expToNext) ? skill.expToNext : SKILL_EXP_TO_NEXT;
+    skill.exp = Math.min(need, curExp + skillExpPerCast(skill.cooldownMs));
+    if (skill.exp >= need) {
+      this.addFloatingText(`✨ ${skill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
+    }
+  }
+
+  /** Gray prey teaches nothing (matches 0 hunter EXP on gray kills). */
+  private isGrayPrey(hunter: Hunter, monster: Monster): boolean {
+    return !monster.isBoss && (hunter.level - monster.level >= this.agentConfig.grayGap);
+  }
+
+  // --------------------------------------------------------------------------
+  // Skill zones (T2 revamp): persistent battlefield objects created by tier-2
+  // casts. Damage zones pin to the ground at the target; support auras follow
+  // the caster and die early if the caster goes down. Cap ~6 concurrent zones
+  // (oldest expires first). Every zone duration stays below its skill CD.
+  // --------------------------------------------------------------------------
+
+  /** Tier-2 zone cast: lays the ActiveZone and plays the cast presentation. */
+  private castT2Zone(hunter: Hunter, skill: Skill, target: Monster | null) {
+    const now = Date.now();
+    skill.lastUsedMs = now;
+    const level = typeof skill.level === 'number' && Number.isFinite(skill.level) ? skill.level : 1;
+    const tpl = CLASS_KITS[hunter.charClass]?.skillTemplates[1];
+    const cfg = tpl?.zone;
+    const kind: ZoneKind = cfg?.kind ?? 'burn';
+    const radius = cfg?.radius ?? 3;
+    const duration = (cfg?.durationSec ?? 5) + 0.5 * Math.max(0, level - 1);
+    const atkRef = this.effectiveAtk(hunter);
+
+    // Anchor: support auras follow the caster; damage zones pin to the
+    // target's ground (fall back to the caster when no live target).
+    let x = hunter.gx;
+    let y = hunter.gy;
+    let followHunterId: string | undefined;
+    if (isSupportZone(kind)) {
+      followHunterId = hunter.id;
+    } else if (target && target.hp > 0) {
+      x = target.gx;
+      y = target.gy;
+    }
+
+    // Cap concurrent zones (~6, oldest expires first).
+    if (this.activeZones.length >= 6) this.activeZones.shift();
+    this.activeZones.push({
+      id: `zone-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      kind, x, y, radius, duration,
+      elapsed: 0,
+      tickTimer: 0,
+      atkRef,
+      sourceId: hunter.id,
+      followHunterId,
+      level,
+      tickFrac: cfg?.tickFrac ?? 0.3,
+      hotMaxFrac: cfg?.hotMaxFrac ?? 0,
+      masteryEarned: false,
+    });
+
+    // Support zones earn mastery on the cast (no gray gating for support,
+    // like the old mend/anthem paths). Damage zones earn it on the first
+    // tick that bites non-gray prey (see tickZone).
+    if (isSupportZone(kind)) this.grantSkillMastery(hunter, skill);
+
+    // Cast presentation: existing cast frame + cast text + zone-appropriate FX.
+    hunter.isAttacking = true;
+    hunter.attackAnimTimer = 0.35;
+    this.addFloatingText(`⚡ ${skill.name}!`, hunter.gx, hunter.gy - 0.5, '#38bdf8', 11);
+    this.skillVfxs.push({
+      id: `vfx-zone-${Date.now()}-${Math.random()}`,
+      type: zoneCastVfx(kind),
+      startX: x,
+      startY: y,
+      targetX: x,
+      targetY: y,
+      duration: 0.6,
+      elapsed: 0,
+      color: '#38bdf8',
+    });
+    const fx = skill.effectType;
+    if (fx === 'meteor') soundFx.playMagic();
+    else if (fx === 'smite') soundFx.playSmite();
+    else if (fx === 'multishot') soundFx.playArrow();
+    else if (fx === 'ballad' || fx === 'encore') soundFx.playLute();
+    else if (fx === 'heal' || fx === 'holy_burst') soundFx.playHeal();
+    else soundFx.playSlash();
+
+    // Consecrated Aura taunts on cast (Paladin tank pattern, 4s < 11s CD).
+    if (kind === 'consecration') this.tauntMonsters(hunter, 4, skill.name);
+  }
+
+  /** Tick all zones: expiry, aura re-anchor, 1s damage/heal ticks. */
+  private updateZones(dt: number) {
+    if (this.activeZones.length === 0) return;
+    const tickedKinds = new Set<ZoneKind>();
+    for (let i = this.activeZones.length - 1; i >= 0; i--) {
+      const z = this.activeZones[i];
+      z.elapsed += dt;
+      if (z.elapsed >= z.duration) {
+        this.activeZones.splice(i, 1);
+        continue;
       }
-      if (taunted > 0) {
-        this.addFloatingText(`😡 Taunt! (${taunted})`, hunter.gx, hunter.gy - 1.1, '#f87171', 12);
-        this.addLog('combat', `${hunter.name} taunts ${taunted} beast${taunted > 1 ? 's' : ''} with ${skill.name}!`, hunter.name);
+      if (z.followHunterId) {
+        const caster = this.hunters.find(h => h.id === z.followHunterId);
+        // Support auras die with the caster. handleHunterDefeat restores hp
+        // (1 + clinic warp, or 30% max on party rescue) before zones tick,
+        // so an hp<=0 check never observes the knockdown — guard on the
+        // clinic-warp state instead. The party-rescue path is covered by the
+        // kill-on-knockdown splice in handleHunterDefeat; this check is
+        // belt-and-braces for warped casters.
+        if (!caster || caster.hp <= 0 || caster.state === 'RECOVERING_CLINIC') {
+          this.activeZones.splice(i, 1);
+          continue;
+        }
+        z.x = caster.gx;
+        z.y = caster.gy;
+      }
+      z.tickTimer += dt;
+      // Catch-up ticks: a large dt (hitch/tab-switch) may span several 1s
+      // boundaries — drain the accumulator instead of dropping ticks.
+      while (z.tickTimer >= 1) {
+        z.tickTimer -= 1;
+        if (this.tickZone(z)) tickedKinds.add(z.kind);
+        // tickZone removes the zone when its source is gone — stop ticking it.
+        if (!this.activeZones.includes(z)) break;
       }
     }
+    // One quiet blip per ticking kind per global tick.
+    for (const kind of tickedKinds) soundFx.playZoneTick(kind);
+  }
+
+  /**
+   * One 1s zone tick. DoT = max(3, atkRef*frac), no crit, gray-gated skill
+   * mastery; HoT clamped to effectiveMaxHp. Kill credit flows through the
+   * sourceId hunter into handleMonsterDefeat. Floating texts throttled to
+   * ~5 per tick per zone. Returns true when the tick bit something (audio).
+   */
+  private tickZone(z: ActiveZone): boolean {
+    const src = this.hunters.find(h => h.id === z.sourceId);
+    if (!src) {
+      const idx = this.activeZones.indexOf(z);
+      if (idx > -1) this.activeZones.splice(idx, 1);
+      return false;
+    }
+    const rankScale = 1 + 0.1 * Math.max(0, z.level - 1);
+    const vfxType = zoneTickVfx(z.kind);
+    let bit = false;
+
+    if (z.kind === 'radiance' || z.kind === 'hymn') {
+      const allies = this.hunters.filter(h => h.hp > 0 && gridDistance(z.x, z.y, h.gx, h.gy) <= z.radius);
+      let shown = 0;
+      for (const h of allies) {
+        const maxHp = this.effectiveMaxHp(h);
+        const amt = Math.max(1, Math.round(maxHp * z.hotMaxFrac * rankScale + z.atkRef * z.tickFrac * rankScale));
+        h.hp = Math.min(maxHp, h.hp + amt);
+        // Resonant Hymn refreshes Encore (+20% ATK) on everyone inside.
+        if (z.kind === 'hymn') {
+          if ((h.encoreBoost ?? 0) < 0.20) h.encoreBoost = 0.20;
+          h.encoreTimer = Math.max(h.encoreTimer ?? 0, 8);
+        }
+        if (shown < 5) {
+          this.addFloatingText(`+${amt}`, h.gx, h.gy - 0.5, z.kind === 'hymn' ? '#2dd4bf' : '#4ade80', 11);
+          shown++;
+        }
+        bit = true;
+      }
+      if (allies.length > 5) {
+        this.addFloatingText(`+heal x${allies.length}`, z.x, z.y - 0.5, '#4ade80', 11);
+      }
+    } else {
+      // DoT (storm/arrows/burn/consecration): bite every live monster inside.
+      const dmg = Math.max(3, Math.round(z.atkRef * z.tickFrac * rankScale));
+      const victims = this.monsters.filter(m => m.hp > 0 && gridDistance(z.x, z.y, m.gx, m.gy) <= z.radius);
+      if (!z.masteryEarned && victims.some(m => !this.isGrayPrey(src, m))) {
+        const t2 = src.skills.find(s => skillTier(s) === 2) ?? src.skills[1];
+        if (t2) {
+          this.grantSkillMastery(src, t2);
+          z.masteryEarned = true;
+        }
+      }
+      let shown = 0;
+      for (const m of [...victims]) {
+        if (m.hp <= 0) continue;
+        m.hp -= dmg;
+        if (m.state !== 'COMBAT') m.state = 'COMBAT';
+        if (!m.targetHunterId) m.targetHunterId = z.sourceId;
+        if (shown < 5) {
+          this.addFloatingText(`-${dmg}`, m.gx, m.gy, '#f8fafc', 11);
+          shown++;
+        }
+        bit = true;
+        if (m.hp <= 0) this.handleMonsterDefeat(src, m);
+      }
+      if (victims.length > 5) {
+        this.addFloatingText(`-${dmg} x${victims.length}`, z.x, z.y - 0.5, '#cbd5e1', 11);
+      }
+      // Consecrated Aura also steadies allies: small shield refresh each tick.
+      if (z.kind === 'consecration') {
+        const allies = this.hunters.filter(h => h.hp > 0 && gridDistance(z.x, z.y, h.gx, h.gy) <= z.radius);
+        for (const h of allies) {
+          const amt = Math.max(1, Math.round(this.effectiveMaxHp(h) * 0.02 * rankScale));
+          h.shieldHp = Math.max(h.shieldHp ?? 0, amt);
+          h.shieldTimer = Math.max(h.shieldTimer ?? 0, 3);
+          bit = true;
+        }
+      }
+    }
+
+    // Per-tick mini-burst reusing the short SkillVFX vocabulary.
+    if (bit) {
+      this.skillVfxs.push({
+        id: `vfx-ztick-${Date.now()}-${Math.random()}`,
+        type: vfxType,
+        startX: z.x,
+        startY: z.y,
+        targetX: z.x,
+        targetY: z.y,
+        duration: 0.3,
+        elapsed: 0,
+        color: '#f8fafc',
+      });
+    }
+    return bit;
   }
 
   private resolveHunterCombat(hunter: Hunter, monster: Monster, dt: number) {
@@ -1542,118 +1787,102 @@ export class GameSimulation {
     hunter.isAttacking = true;
     hunter.attackAnimTimer = 0.35;
 
-    // Cleric heal AI: if a heal skill is ready and a hurt ally is near,
-    // mend them INSTEAD of attacking this tick (no damage to the monster,
-    // no hunter EXP — support tax, transaction-free). The mend itself still
-    // grants skill mastery (like Bard Encore) so healers can go READY and
-    // promote at the Academy — without this, Clerics could never use it.
+    // Cleric support AI (skill-zone revamp): T3 Renewing Dawn party burst
+    // when >=3 hurt allies or anyone critical (<40%), else T2 Soothing
+    // Radiance aura when >=2 hurt in r5, else T1 Mend Wounds on the most
+    // wounded ally <75% in r5. Heal formulas scale on skill.damageMultiplier
+    // so Academy promotions thicken every mend (dead-stat bug fixed).
     if (hunter.charClass === 'Cleric') {
       const nowMs = Date.now();
-      const healSkill = hunter.skills.find(s => s.effectType === 'heal' && nowMs - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s)) ?? null;
-      if (healSkill) {
-        const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
-        const partyIds = party ? new Set(this.partyMembers(hunter).map(m => m.id)) : null;
-        let target: Hunter | null = null;
-        let targetFrac = 0.75;
-        const consider = (h: Hunter) => {
-          if (h.hp <= 0) return;
-          if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) return;
-          const frac = h.hp / Math.max(1, this.effectiveMaxHp(h));
-          if (frac >= 0.75) return;
-          if (!target || frac < targetFrac) { target = h; targetFrac = frac; }
-        };
-        // Party members first, then anyone else in range (including self).
-        if (partyIds) for (const h of this.hunters) { if (partyIds.has(h.id)) consider(h); }
-        if (!target) for (const h of this.hunters) { if (partyIds && partyIds.has(h.id)) continue; consider(h); }
-        if (target) {
-          const t: Hunter = target;
-          healSkill.lastUsedMs = nowMs;
-          const heal = Math.round(t.maxHp * 0.25 + hunter.atk * 0.8);
-          t.hp = Math.min(this.effectiveMaxHp(t), t.hp + heal);
-          // Usage-based mastery for the mend (no gray gating for support).
-          if (healSkill.level < healSkill.maxLevel) {
-            const curExp = typeof healSkill.exp === 'number' && Number.isFinite(healSkill.exp) ? healSkill.exp : 0;
-            const need = typeof healSkill.expToNext === 'number' && Number.isFinite(healSkill.expToNext) ? healSkill.expToNext : SKILL_EXP_TO_NEXT;
-            healSkill.exp = Math.min(need, curExp + skillExpPerCast(healSkill.cooldownMs));
-            if (healSkill.exp >= need) {
-              this.addFloatingText(`✨ ${healSkill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
-            }
-          }
-          this.addFloatingText(`+${heal}`, t.gx, t.gy - 0.5, '#4ade80', 12);
-          this.skillVfxs.push({
-            id: `vfx-heal-${Date.now()}-${Math.random()}`,
-            type: 'heal',
-            startX: t.gx,
-            startY: t.gy,
-            targetX: t.gx,
-            targetY: t.gy,
-            duration: 0.6,
-            elapsed: 0,
-            color: '#4ade80'
-          });
-          soundFx.playHeal();
-          return;
+      const cdReady = (s: Skill) => nowMs - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s);
+      const t1 = hunter.skills.find(s => skillTier(s) === 1 && s.effectType === 'heal' && cdReady(s)) ?? null;
+      const t2 = hunter.skills.find(s => skillTier(s) === 2 && cdReady(s)) ?? null;
+      const t3 = hunter.skills.find(s => skillTier(s) === 3 && s.effectType === 'holy_burst' && cdReady(s)) ?? null;
+      const hpFrac = (h: Hunter) => h.hp / Math.max(1, this.effectiveMaxHp(h));
+      const allies5 = this.hunters.filter(h => h.hp > 0 && gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) <= 5);
+      const allies6 = this.hunters.filter(h => h.hp > 0 && gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) <= 6);
+      const hurt5 = allies5.filter(h => hpFrac(h) < 0.75);
+      const hurt6 = allies6.filter(h => hpFrac(h) < 0.75);
+      const critical = allies6.some(h => hpFrac(h) < 0.40);
+      if (t3 && (hurt6.length >= 3 || critical)) {
+        // T3: holy burst healing the party in r6 (~30% maxHp + 1.0 ATK),
+        // scaled by damageMultiplier (base 2.0 → +0.3/rank ≈ +15%/rank).
+        t3.lastUsedMs = nowMs;
+        const casterAtk = this.effectiveAtk(hunter);
+        for (const h of allies6) {
+          const maxHp = this.effectiveMaxHp(h);
+          const heal = Math.round((maxHp * 0.30 + casterAtk * 1.0) * (t3.damageMultiplier / 2.0));
+          h.hp = Math.min(maxHp, h.hp + heal);
+          this.addFloatingText(`+${heal}`, h.gx, h.gy - 0.5, '#4ade80', 12);
         }
+        // Usage-based mastery for the burst (no gray gating for support).
+        this.grantSkillMastery(hunter, t3);
+        this.skillVfxs.push({
+          id: `vfx-dawn-${Date.now()}-${Math.random()}`,
+          type: 'holy_burst',
+          startX: hunter.gx,
+          startY: hunter.gy,
+          targetX: hunter.gx,
+          targetY: hunter.gy,
+          duration: 0.6,
+          elapsed: 0,
+          color: '#facc15'
+        });
+        soundFx.playHeal();
+        this.addFloatingText(`⚡ ${t3.name}!`, hunter.gx, hunter.gy - 0.5, '#38bdf8', 11);
+        return;
+      }
+      if (t2 && hurt5.length >= 2) {
+        this.castT2Zone(hunter, t2, null);
+        return;
+      }
+      if (t1 && hurt5.length > 0) {
+        // T1: single-target mend on the most wounded ally in r5
+        // (25% maxHp + 0.8 ATK, scaled by damageMultiplier, base 1.0).
+        let target = hurt5[0];
+        for (const h of hurt5) if (hpFrac(h) < hpFrac(target)) target = h;
+        t1.lastUsedMs = nowMs;
+        const maxHp = this.effectiveMaxHp(target);
+        const heal = Math.round((maxHp * 0.25 + this.effectiveAtk(hunter) * 0.8) * t1.damageMultiplier);
+        target.hp = Math.min(maxHp, target.hp + heal);
+        // Usage-based mastery for the mend (no gray gating for support).
+        this.grantSkillMastery(hunter, t1);
+        this.addFloatingText(`+${heal}`, target.gx, target.gy - 0.5, '#4ade80', 12);
+        this.skillVfxs.push({
+          id: `vfx-heal-${Date.now()}-${Math.random()}`,
+          type: 'heal',
+          startX: target.gx,
+          startY: target.gy,
+          targetX: target.gx,
+          targetY: target.gy,
+          duration: 0.6,
+          elapsed: 0,
+          color: '#4ade80'
+        });
+        soundFx.playHeal();
+        return;
       }
       // No hurt ally in range: fall through to the normal (weak) attack path.
     }
 
-    // Bard Encore AI: if a pure-buff encore is ready and an ally nearby lacks
-    // the Encore buff, sing INSTEAD of attacking this tick (support tax).
+    // Bard support AI: T2 Resonant Hymn aura when the party is clustered
+    // (>=1 ally within r5) and someone's Encore is expiring (<=3s left).
+    // The hymn zone itself refreshes Encore inside, closing the loop.
+    // T1/T3 flow into the damage path below (ballad + damaging finale).
     if (hunter.charClass === 'Bard') {
       const nowMsBard = Date.now();
-      const encoreSkill = hunter.skills.find(s => s.effectType === 'encore' && (s.damageMultiplier ?? 0) === 0 && nowMsBard - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s)) ?? null;
-      if (encoreSkill) {
-        const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
-        const partyIds = party ? new Set(this.partyMembers(hunter).map(m => m.id)) : null;
-        let needsSong = false;
-        const checkNeeds = (h: Hunter) => {
-          if (h.hp <= 0) return;
-          if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) return;
-          if ((h.encoreTimer ?? 0) <= 0.5) needsSong = true;
-        };
-        if (partyIds) for (const h of this.hunters) { if (partyIds.has(h.id)) checkNeeds(h); if (needsSong) break; }
-        if (!needsSong) for (const h of this.hunters) { if (partyIds && partyIds.has(h.id)) continue; checkNeeds(h); if (needsSong) break; }
-        // Solo Bard with expired buff still sings for self.
-        if (!needsSong && (hunter.encoreTimer ?? 0) <= 0.5) needsSong = true;
-        if (needsSong) {
-          encoreSkill.lastUsedMs = nowMsBard;
-          const buffAtk = 0.20;
-          const buffDur = 8;
-          for (const h of this.hunters) {
-            if (h.hp <= 0) continue;
-            if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) continue;
-            // One Encore per hunter: strongest wins, refresh duration.
-            if ((h.encoreBoost ?? 0) < buffAtk) h.encoreBoost = buffAtk;
-            h.encoreTimer = Math.max(h.encoreTimer ?? 0, buffDur);
-          }
-          // Usage-based mastery for the anthem (no gray gating for support).
-          if (encoreSkill.level < encoreSkill.maxLevel) {
-            const curExp = typeof encoreSkill.exp === 'number' && Number.isFinite(encoreSkill.exp) ? encoreSkill.exp : 0;
-            const need = typeof encoreSkill.expToNext === 'number' && Number.isFinite(encoreSkill.expToNext) ? encoreSkill.expToNext : SKILL_EXP_TO_NEXT;
-            const gain = 2 + encoreSkill.cooldownMs / 1000;
-            encoreSkill.exp = Math.min(need, curExp + gain);
-            if (encoreSkill.exp >= need) {
-              this.addFloatingText(`✨ ${encoreSkill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
-            }
-          }
-          this.skillVfxs.push({
-            id: `vfx-encore-${Date.now()}-${Math.random()}`,
-            type: 'encore',
-            startX: hunter.gx,
-            startY: hunter.gy,
-            targetX: hunter.gx,
-            targetY: hunter.gy,
-            duration: 0.6,
-            elapsed: 0,
-            color: '#2dd4bf'
-          });
-          soundFx.playLute();
-          this.addFloatingText(`🎵 ${encoreSkill.name}!`, hunter.gx, hunter.gy - 0.5, '#2dd4bf', 11);
+      const hymn = hunter.skills.find(s => skillTier(s) === 2 && nowMsBard - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s)) ?? null;
+      if (hymn) {
+        const allies5 = this.hunters.filter(h => h.hp > 0 && h.id !== hunter.id && gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) <= 5);
+        const expiring = (hunter.encoreTimer ?? 0) <= 3 || allies5.some(h => (h.encoreTimer ?? 0) <= 3);
+        // Solo self-cast: a lone Bard (no allies in r5) may still anchor the
+        // hymn on themselves to refresh their own expiring Encore.
+        if ((allies5.length >= 1 || (hunter.encoreTimer ?? 0) <= 3) && expiring) {
+          this.castT2Zone(hunter, hymn, null);
           return;
         }
       }
-      // No unbuffed ally in range: fall through to ballad/finale damage path.
+      // No clustered + expiring moment: fall through to ballad/finale damage path.
     }
 
     // Check available skills for auto-cast (round-robin: oldest ready first
@@ -1662,9 +1891,11 @@ export class GameSimulation {
     const now = Date.now();
     let readySkill: Skill | null = null;
     for (const s of hunter.skills) {
-      // Pure-buff Encore Anthem (damage 0) is handled by the Bard support
-      // path above — never waste a damage cast tick on it.
-      if (s.effectType === 'encore' && (s.damageMultiplier ?? 0) === 0) continue;
+      // Pure-support casts never ride the damage path: Cleric mends/bursts
+      // fire from the support branch, and Cleric/Bard T2 auras are AI-gated
+      // there too. Other classes' T2 zones route to castT2Zone below.
+      if (s.effectType === 'heal' || s.effectType === 'holy_burst') continue;
+      if (skillTier(s) === 2 && (hunter.charClass === 'Cleric' || hunter.charClass === 'Bard')) continue;
       if (now - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s) && (!readySkill || s.lastUsedMs < readySkill.lastUsedMs)) {
         readySkill = s;
       }
@@ -1676,12 +1907,21 @@ export class GameSimulation {
     let damage = baseDamage;
 
     if (readySkill) {
+      // Tier-2 zone casts (all classes): lay the ActiveZone instead of striking.
+      if (skillTier(readySkill) === 2) {
+        this.castT2Zone(hunter, readySkill, monster);
+        return;
+      }
       // Cast animated skill!
       readySkill.lastUsedMs = now;
-      damage = baseDamage * readySkill.damageMultiplier;
+      // Piercing Comet (Ranger T3): DEF pierce via a reduced monster-def factor.
+      const skillBase = hunter.charClass === 'Ranger' && skillTier(readySkill) === 3
+        ? this.effectiveAtk(hunter) - (monster.def * 0.1)
+        : baseDamage;
+      damage = skillBase * readySkill.damageMultiplier;
       // Meteorfall (Solar Cataclysm): +35% on the skill portion only.
       const meteorfall = this.equippedEffect(hunter, 'meteorfall');
-      if (meteorfall > 0) damage = baseDamage + (damage - baseDamage) * (1 + meteorfall);
+      if (meteorfall > 0) damage = skillBase + (damage - skillBase) * (1 + meteorfall);
       // Crescendo (Fateweaver Lute): Encore-buffed hunters deal +25% skill
       // damage when a crescendo Bard plays within 6 cells.
       if ((hunter.encoreTimer ?? 0) > 0) {
@@ -1692,7 +1932,7 @@ export class GameSimulation {
           const v = this.equippedEffect(h, 'crescendo');
           if (v > crescendo) crescendo = v;
         }
-        if (crescendo > 0) damage = baseDamage + (damage - baseDamage) * (1 + crescendo);
+        if (crescendo > 0) damage = skillBase + (damage - skillBase) * (1 + crescendo);
       }
 
       // Usage-based mastery: flat + CD bonus (longer CD = more EXP).
@@ -2846,6 +3086,17 @@ export class GameSimulation {
   }
 
   private handleHunterDefeat(hunter: Hunter, monster: Monster) {
+    // Knockdown kills the caster's support auras (consecration/radiance/
+    // hymn) on ANY knockdown path — clinic warp AND party rescue. Choice:
+    // even though a rescued hunter stays in the field at 30% maxHp (and
+    // deaths++ still counts), the aura uptime ends and must be recast;
+    // otherwise the aura would linger after a rescue or follow the caster
+    // to the clinic (updateZones runs after defeat, when hp is already
+    // restored, so it can never catch the knockdown itself). Ground-fixed
+    // damage zones persist — kill credit still flows via sourceId.
+    if (this.activeZones.length > 0) {
+      this.activeZones = this.activeZones.filter(z => z.followHunterId !== hunter.id);
+    }
     // Party rescue: a live party member within 6 cells (the share radius)
     // steadies the fallen hunter — survive in place at 30% maxHp instead of
     // a clinic warp, once per 90s per hunter. Stays in the party; deaths
@@ -3526,6 +3777,22 @@ export class GameSimulation {
                 skill.damageMultiplier -= 0.3 * overflow;
               }
             }
+            // Skill-zone revamp migration: refresh stale cooldowns, names,
+            // effect types, and descriptions to the canonical revamp table.
+            // Damage rescales from rank (base + 0.3/rank, the Academy
+            // promotion step) so earned promotions survive the rebalance.
+            const revTierMatch = /-(\d+)\s*$/.exec(typeof skill.id === 'string' ? skill.id : '');
+            const revTier = revTierMatch ? parseInt(revTierMatch[1], 10) : NaN;
+            if (Number.isFinite(revTier)) {
+              const canon = dataCreateClassSkill(h.charClass, Math.max(1, Math.min(3, revTier)));
+              skill.name = canon.name;
+              skill.cooldownMs = canon.cooldownMs;
+              skill.effectType = canon.effectType;
+              skill.description = canon.description;
+              const rank = typeof skill.level === 'number' && Number.isFinite(skill.level) ? skill.level : 1;
+              skill.damageMultiplier = canon.damageMultiplier + 0.3 * Math.max(0, rank - 1);
+              if (typeof skill.lastUsedMs !== 'number' || !Number.isFinite(skill.lastUsedMs)) skill.lastUsedMs = 0;
+            }
           }
         }
         if (!Number.isFinite(h.gx) || !Number.isFinite(h.gy) || h.gx < -2 || h.gx > 62 || h.gy < -2 || h.gy > 62) {
@@ -3551,4 +3818,24 @@ export class GameSimulation {
       return null;
     }
   }
+}
+
+/**
+ * T2 zone/aura blurb for the inspector (replaces the plain Dmg% on the
+ * tier-2 row): `Zone 4s · ~40%/s · r3` or `Aura 5s · HoT ~6%/s · follows`.
+ */
+export function skillZoneBlurb(charClass: CharacterClass, skill: Skill): string | null {
+  if (skillTier(skill) !== 2) return null;
+  const zone = CLASS_KITS[charClass]?.skillTemplates[1]?.zone;
+  if (!zone) return null;
+  if (zone.kind === 'radiance' || zone.kind === 'hymn') {
+    const pct = Math.round((zone.hotMaxFrac ?? 0) * 100);
+    const extra = zone.kind === 'hymn' ? ' + Encore' : '';
+    return `Aura ${zone.durationSec}s · HoT ~${pct}%/s${extra} · follows`;
+  }
+  const pct = Math.round(zone.tickFrac * 100);
+  if (zone.kind === 'consecration') {
+    return `Aura ${zone.durationSec}s · ~${pct}%/s + shield · follows`;
+  }
+  return `Zone ${zone.durationSec}s · ~${pct}%/s · r${zone.radius}`;
 }

@@ -16,25 +16,26 @@ export const ClericKit: ClassKit = {
       idPrefix: 'cleric',
       name: 'Mend Wounds',
       cooldownMs: 5000,
-      damageMultiplier: 2.4, // 2.0 + tier(1) * 0.4
+      damageMultiplier: 1.0,
       effectType: 'heal',
-      description: 'Channels holy light to heal the most wounded nearby ally.',
+      description: 'Mends the most wounded ally in r5 for 25% maxHp + 0.8 ATK (below 75% HP).',
     },
     {
       idPrefix: 'cleric',
       name: 'Soothing Radiance',
-      cooldownMs: 5000,
-      damageMultiplier: 2.8, // 2.0 + tier(2) * 0.4
+      cooldownMs: 10000,
+      damageMultiplier: 1.0,
       effectType: 'heal',
-      description: 'Channels holy light to heal the most wounded nearby ally.',
+      description: 'Radiates a following healing aura (r3, 5s) restoring ~6% maxHp + 0.2 ATK each second.',
+      zone: { kind: 'radiance', radius: 3, durationSec: 5, tickFrac: 0.20, hotMaxFrac: 0.06 },
     },
     {
       idPrefix: 'cleric',
       name: 'Renewing Dawn',
-      cooldownMs: 5000,
-      damageMultiplier: 3.2, // 2.0 + tier(3) * 0.4
-      effectType: 'heal',
-      description: 'Channels holy light to heal the most wounded nearby ally.',
+      cooldownMs: 15000,
+      damageMultiplier: 2.0,
+      effectType: 'holy_burst',
+      description: 'Holy burst healing the party in r6 for ~30% maxHp + 1.0 ATK.',
     },
   ],
 };

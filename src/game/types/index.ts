@@ -12,6 +12,8 @@ export type {
   Equipment,
 } from './equipment';
 export type { Skill, SkillEffectType } from './skill';
+export type { ActiveZone, ZoneKind } from './zone';
+export { isSupportZone, zoneTickVfx, zoneCastVfx, zoneColor } from './zone';
 export type { ItemDrop } from './loot';
 export type { FloatingText, SkillVFX } from './vfx';
 export type { GameLog } from './log';

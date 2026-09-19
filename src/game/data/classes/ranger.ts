@@ -15,25 +15,26 @@ export const RangerKit: ClassKit = {
       idPrefix: 'ranger',
       name: 'Quick Shot',
       cooldownMs: 3500,
-      damageMultiplier: 1.95, // 1.6 + tier(1) * 0.35
+      damageMultiplier: 1.8,
       effectType: 'multishot',
-      description: 'Fires rapid enchanted arrows piercing monster defenses.',
+      description: 'Spam volley of enchanted arrows dealing 180% damage.',
     },
     {
       idPrefix: 'ranger',
       name: 'Rain of Arrows',
-      cooldownMs: 3500,
-      damageMultiplier: 2.3, // 1.6 + tier(2) * 0.35
+      cooldownMs: 9000,
+      damageMultiplier: 1.0,
       effectType: 'multishot',
-      description: 'Fires rapid enchanted arrows piercing monster defenses.',
+      description: 'Rains a fixed arrow zone (r3, 5s) piercing foes for ~35% ATK each second.',
+      zone: { kind: 'arrows', radius: 3, durationSec: 5, tickFrac: 0.35 },
     },
     {
       idPrefix: 'ranger',
       name: 'Piercing Comet',
-      cooldownMs: 3500,
-      damageMultiplier: 2.65, // 1.6 + tier(3) * 0.35
+      cooldownMs: 14000,
+      damageMultiplier: 3.6,
       effectType: 'multishot',
-      description: 'Fires rapid enchanted arrows piercing monster defenses.',
+      description: 'Finisher comet dealing 360% damage, piercing most monster DEF.',
     },
   ],
 };

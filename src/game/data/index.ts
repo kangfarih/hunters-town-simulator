@@ -23,6 +23,7 @@ export {
   SKILL_EXP_TO_NEXT,
   skillExpPerCast,
   createClassSkill,
+  skillTier,
   academyCostFor,
   readySkills,
   hasAffordableReadySkill,
