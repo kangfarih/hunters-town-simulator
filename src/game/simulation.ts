@@ -2,418 +2,112 @@ import {
   Hunter, Monster, Building, FloatingText, SkillVFX, GameLog,
   CharacterClass, ItemDrop, Equipment, Skill,
   MaterialStock, MaterialType, EquipmentRarity, EquipmentEffectId
-} from '../types';
+} from './types';
 import { gridDistance, getIsometricFacing } from './isometric';
 import { findPath, PathPoint, reserveAt } from './pathfinding';
 import { soundFx } from './audioSynth';
+// Modular data tables (pure: no simulation state). Simulation owns behavior;
+// everything a designer tweaks lives in data/.
+import {
+  INITIAL_BUILDINGS as DATA_INITIAL_BUILDINGS,
+  TOWN_GATE_POS as DATA_TOWN_GATE_POS,
+  SOUTH_GATE_POS as DATA_SOUTH_GATE_POS,
+  SUMMON_PORTAL_POS as DATA_SUMMON_PORTAL_POS,
+  ZONE_ROAM_BOUNDS as DATA_ZONE_ROAM_BOUNDS,
+  SAVE_KEY as DATA_SAVE_KEY,
+  HUNTER_FIRST_NAMES as DATA_HUNTER_FIRST_NAMES,
+  HUNTER_TITLES as DATA_HUNTER_TITLES,
+  makeHunterName,
+  DEFAULT_AGENT_CONFIG as DATA_DEFAULT_AGENT_CONFIG,
+  clampAgentConfig as dataClampAgentConfig,
+  partyColor as dataPartyColor,
+  difficultyMultipliers as dataDifficultyMultipliers,
+  PLAYABLE_CLASSES,
+  baseStatsFor as dataBaseStatsFor,
+  classWeaponNoun as dataClassWeaponNoun,
+  classArmorNoun as dataClassArmorNoun,
+  SKILL_EXP_TO_NEXT as DATA_SKILL_EXP_TO_NEXT,
+  createClassSkill as dataCreateClassSkill,
+  skillExpPerCast,
+  academyCostFor,
+  readySkills,
+  hasAffordableReadySkill,
+  cheapestReadyCost,
+  MONSTER_ARCHETYPES,
+  monsterLabel as dataMonsterLabel,
+  RARITY_STAT_MULT as DATA_RARITY_STAT_MULT,
+  GEAR_SELL_MULT as DATA_GEAR_SELL_MULT,
+  gearSellPrice as dataGearSellPrice,
+  RARITY_HEX as DATA_RARITY_HEX,
+  RARITY_TEXT_CLASS as DATA_RARITY_TEXT_CLASS,
+  RARITY_BORDER_CLASS as DATA_RARITY_BORDER_CLASS,
+  rarityHex as dataRarityHex,
+  rarityTextClass as dataRarityTextClass,
+  rarityBorderClass as dataRarityBorderClass,
+  EPIC_DEFS as DATA_EPIC_DEFS,
+  epicEffectDescription as dataEpicEffectDescription,
+  getEquipmentPrefix as dataGetEquipmentPrefix,
+  zoneGearTier as dataZoneGearTier,
+  buildingCapacity as dataBuildingCapacity,
+  serviceTime as dataServiceTime,
+} from './data';
+import type { AgentConfig, Party, EpicDef, MonsterDensity } from './data';
 
-// Town Building Locations (Isometric Grid)
-export const INITIAL_BUILDINGS: Building[] = [
-  {
-    id: 'b-townhall',
-    type: 'TOWN_HALL',
-    name: 'Sanctuary Hall',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 100,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 28,
-    gy: 24,
-    width: 3,
-    height: 3,
-    doorGx: 29,
-    doorGy: 26,
-    description: 'The Chief Sanctuary. Manages town territory and hunter allowances.',
-    serviceName: 'Town Governance',
-    currentVisitors: [],
-    upgradeEffect: 'Increases max hunters & global town hunting tax rate.'
-  },
-  {
-    id: 'b-blacksmith',
-    type: 'BLACKSMITH',
-    name: 'Vulcan Forge',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 80,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 24,
-    gy: 28,
-    width: 2,
-    height: 2,
-    doorGx: 25,
-    doorGy: 30,
-    description: 'Crafts and upgrades high-grade weapons and heavy armor for hunters.',
-    serviceName: 'Weapon & Armor Crafting',
-    currentVisitors: [],
-    upgradeEffect: 'Unlocks higher weapon & armor tiers for auto-buying.'
-  },
-  {
-    id: 'b-alchemy',
-    type: 'ALCHEMY_LAB',
-    name: 'Elixir Cauldron',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 75,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 32,
-    gy: 28,
-    width: 2,
-    height: 2,
-    doorGx: 32,
-    doorGy: 30,
-    description: 'Brews restorative HP and combat elixirs from monster essences.',
-    serviceName: 'Potion Dispensing',
-    currentVisitors: [],
-    upgradeEffect: 'Brews stronger restorative potions with instant heal.'
-  },
-  {
-    id: 'b-tavern',
-    type: 'TAVERN',
-    name: 'Boar & Barrel Tavern',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 90,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 24,
-    gy: 33,
-    width: 2,
-    height: 2,
-    doorGx: 25,
-    doorGy: 35,
-    description: 'Serves roast meat and frothy ale to recharge exhausted hunters.',
-    serviceName: 'Food & Lodging',
-    currentVisitors: [],
-    upgradeEffect: 'Grants temporary Morale ATK buff to visiting hunters.'
-  },
-  {
-    id: 'b-academy',
-    type: 'TRAINING_ACADEMY',
-    name: 'Valor Academy',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 100,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 32,
-    gy: 33,
-    width: 2,
-    height: 2,
-    doorGx: 32,
-    doorGy: 35,
-    description: 'Martial school where hunters study and auto-upgrade combat skills.',
-    serviceName: 'Skill Mastery',
-    currentVisitors: [],
-    upgradeEffect: 'Unlocks advanced skill masteries and reduces cooldowns.'
-  },
-  {
-    id: 'b-trading',
-    type: 'TRADING_POST',
-    name: 'Merchant Bazaar',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 60,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 28,
-    gy: 31,
-    width: 2,
-    height: 2,
-    doorGx: 28,
-    doorGy: 33,
-    description: 'Buys all harvested monster trophies, fangs, and pelts for gold.',
-    serviceName: 'Loot Exchange',
-    currentVisitors: [],
-    upgradeEffect: 'Increases purchase price paid to hunters by +15% per level.'
-  },
-  {
-    id: 'b-clinic',
-    type: 'CLINIC',
-    name: 'Mercy Clinic',
-    level: 1,
-    maxLevel: 10,
-    exp: 0,
-    expToNext: 70,
-    totalTransactions: 0,
-    lifetimeGold: 0,
-    gx: 28,
-    gy: 35,
-    width: 2,
-    height: 2,
-    doorGx: 28,
-    doorGy: 37,
-    description: 'Tends to wounded hunters and resurrects fallen warriors from fields.',
-    serviceName: 'Emergency Healing',
-    currentVisitors: [],
-    upgradeEffect: 'Dramatically speeds up recovery time from field wounds.'
-  }
-];
+// ---- Canonical data lives in ./data (pure tables + pure helpers).
+// The consts below are stable re-exports so UI/renderer imports keep working
+// while behavior is carved into systems. Do NOT add new tables here.
+export const INITIAL_BUILDINGS: Building[] = DATA_INITIAL_BUILDINGS;
 
-// Town gates: East (Town Gate road) and South (Graveyard road)
-export const TOWN_GATE_POS = { gx: 38, gy: 30 };
-export const SOUTH_GATE_POS = { gx: 30, gy: 39 };
-export const SUMMON_PORTAL_POS = { gx: 29, gy: 22 };
-
-// Roam boundaries per hunting zone (monsters wander inside their home zone)
-export const ZONE_ROAM_BOUNDS: Record<1 | 2 | 3, { minGx: number; maxGx: number; minGy: number; maxGy: number }> = {
-  1: { minGx: 42, maxGx: 54, minGy: 22, maxGy: 36 }, // Whispering Forest
-  2: { minGx: 22, maxGx: 36, minGy: 42, maxGy: 54 }, // Gloomy Graveyard
-  3: { minGx: 42, maxGx: 56, minGy: 42, maxGy: 56 }, // Volcanic Ruins
-};
+// World geometry + save key (canonical in ./data).
+export const TOWN_GATE_POS = DATA_TOWN_GATE_POS;
+export const SOUTH_GATE_POS = DATA_SOUTH_GATE_POS;
+export const SUMMON_PORTAL_POS = DATA_SUMMON_PORTAL_POS;
+export const ZONE_ROAM_BOUNDS = DATA_ZONE_ROAM_BOUNDS;
 
 // Local save persistence
-export const SAVE_KEY = 'hunters-town-save-v1';
+export const SAVE_KEY = DATA_SAVE_KEY;
 const LEGACY_SAVE_KEY = 'evil-hunter-tycoon-save-v1';
 const SAVE_VERSION = 3;
 // Grid shift applied when migrating pre-shift (v1) saves: every settled
 // coordinate moves +20/+20 as town relocated NW→center.
 const SAVE_SHIFT = 20;
 
-// Hunter-brain tuning knobs (persisted, live-tunable from World Config).
-// retreatHpFrac: fraction of effective max HP below which a hunting hunter
-//   retreats to the clinic. dangerHits: minimum hits-to-die for a fight to
-//   read as fair (lower = braver). grayGap: level gap at/above which kills
-//   pay no spoils. huntBaseline: post-kill utility the hunt itself scores —
-//   town needs must outscore it to interrupt the field. tavernMood: mood
-//   points (0-100) below which the tavern errand scores nonzero.
-export interface AgentConfig {
-  retreatHpFrac: number;
-  dangerHits: number;
-  grayGap: number;
-  huntBaseline: number;
-  tavernMood: number;
-  partiesEnabled: boolean;
-}
+// Hunter-brain tuning + parties (canonical in ./data/tuning).
+export type { AgentConfig, Party };
+export const DEFAULT_AGENT_CONFIG: AgentConfig = DATA_DEFAULT_AGENT_CONFIG;
+export const partyColor = dataPartyColor;
+export const clampAgentConfig = dataClampAgentConfig;
 
-export const DEFAULT_AGENT_CONFIG: AgentConfig = {
-  retreatHpFrac: 0.20,
-  dangerHits: 6,
-  grayGap: 3,
-  huntBaseline: 0.5,
-  tavernMood: 65,
-  partiesEnabled: true,
-};
+// Random Name Generation (canonical lists in ./data/names).
+const HUNTER_FIRST_NAMES = DATA_HUNTER_FIRST_NAMES;
+const HUNTER_TITLES = DATA_HUNTER_TITLES;
 
-/** Runtime-only field party: up to 5 hunters, led by the highest level. */
-export interface Party {
-  id: string;
-  leaderId: string;
-  memberIds: string[];
-  lootTurn: number;
-}
+export type { MonsterDensity };
+export const monsterLabel = dataMonsterLabel;
 
-/**
- * Deterministic per-party badge color: all members of the same party share
- * one color. Pure (no state): null in → null out, else a stable hash of the
- * party id into an 8-color palette of saturated mid-brights readable on dark
- * slate and in the Pixi canvas text. Never persisted.
- */
-const PARTY_COLOR_PALETTE = [
-  '#f472b6', // pink
-  '#60a5fa', // blue
-  '#4ade80', // green
-  '#facc15', // yellow
-  '#c084fc', // purple
-  '#fb923c', // orange
-  '#2dd4bf', // teal
-  '#f87171', // red
-] as const;
+// Building service curves (canonical in ./data/buildings).
+export const buildingCapacity = dataBuildingCapacity;
+export const serviceTime = dataServiceTime;
 
-export function partyColor(partyId: string | null): string | null {
-  if (partyId == null) return null;
-  let hash = 5381;
-  for (let i = 0; i < partyId.length; i++) {
-    hash = ((hash << 5) + hash + partyId.charCodeAt(i)) | 0;
-  }
-  return PARTY_COLOR_PALETTE[Math.abs(hash) % PARTY_COLOR_PALETTE.length];
-}
+// Class base stats (canonical kit in ./data/classes).
+export const baseStatsFor = dataBaseStatsFor;
 
-/** Clamp a (possibly foreign) agent-config blob into valid ranges. */
-export function clampAgentConfig(cfg: Partial<AgentConfig>): AgentConfig {
-  const num = (v: unknown, fallback: number) =>
-    typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-  return {
-    retreatHpFrac: Math.min(0.5, Math.max(0.05, num(cfg.retreatHpFrac, DEFAULT_AGENT_CONFIG.retreatHpFrac))),
-    dangerHits: Math.min(12, Math.max(2, Math.round(num(cfg.dangerHits, DEFAULT_AGENT_CONFIG.dangerHits)))),
-    grayGap: Math.min(6, Math.max(2, Math.round(num(cfg.grayGap, DEFAULT_AGENT_CONFIG.grayGap)))),
-    huntBaseline: Math.min(0.9, Math.max(0.1, num(cfg.huntBaseline, DEFAULT_AGENT_CONFIG.huntBaseline))),
-    tavernMood: Math.min(100, Math.max(10, num(cfg.tavernMood, DEFAULT_AGENT_CONFIG.tavernMood))),
-    partiesEnabled: typeof cfg.partiesEnabled === 'boolean' ? cfg.partiesEnabled : DEFAULT_AGENT_CONFIG.partiesEnabled,
-  };
-}
+// (deleted: canonical kit in ./data/classes — see baseStatsFor re-export above.)
 
-// Random Name Generation
-const HUNTER_FIRST_NAMES = [
-  'Arthur', 'Kaelen', 'Valkor', 'Lyra', 'Seraphina', 'Garrick', 'Rowan', 
-  'Eldrin', 'Draven', 'Zephyr', 'Aria', 'Morrigan', 'Boran', 'Kallum', 
-  'Thorin', 'Ember', 'Ignis', 'Sylvia', 'Vance', 'Cassian'
-];
-const HUNTER_TITLES = [
-  'the Brave', 'Stormcaller', 'Ironclad', 'Shadowstrike', 'Lightbringer', 
-  'Flameheart', 'Swiftwind', 'Dragonbane', 'Oathkeeper', 'Gloomstalker'
-];
-
-export type MonsterDensity = 'sparse' | 'normal' | 'swarming'; // legacy preset, migrated to monsterPopulation on load
-
-/** Display label for any monster: `Lv.{level} {name}`. Pure (no DOM). */
-export function monsterLabel(m: Monster): string {
-  return `Lv.${m.level} ${m.name}`;
-}
-
-/** Max concurrent customers inside a building. */
-export function buildingCapacity(b: Building): number {
-  if (b.type === 'TOWN_HALL') return 3 + Math.floor(b.level / 2);
-  return 1 + Math.floor(b.level / 3);
-}
-
-/** Seconds a hunter spends receiving a building's service. */
-export function serviceTime(b: Building): number {
-  switch (b.type) {
-    case 'TRADING_POST': return Math.max(1.5, 11 - 0.95 * b.level);
-    case 'BLACKSMITH': return Math.max(1.5, 12 - 1.0 * b.level);
-    case 'TRAINING_ACADEMY': return Math.max(1.5, 11 - 0.9 * b.level);
-    case 'ALCHEMY_LAB': return Math.max(1.5, 12 - 1.0 * b.level);
-    case 'TAVERN': return Math.max(1.5, 11 - 0.9 * b.level);
-    case 'CLINIC': return Math.max(2.0, 13 - 1.1 * b.level);
-    default: return Math.max(1.5, 11 - 0.9 * b.level);
-  }
-}
-
-/** Lv-1 base stats for a class (flat baseline, no rarity multiplier + trainee gear names). */
-export function baseStatsFor(charClass: CharacterClass): {
-  maxHp: number; atk: number; def: number; critRate: number; speed: number;
-  weaponName: string; armorName: string; accessoryName: string;
-} {
-  let baseHp = 120;
-  let baseAtk = 22;
-  let baseDef = 8;
-  let baseCrit = 0.1;
-  let speed = 0.04;
-
-  if (charClass === 'Berserker') {
-    baseHp = 150;
-    baseAtk = 28;
-    baseDef = 10;
-    baseCrit = 0.15;
-    speed = 0.042;
-  } else if (charClass === 'Ranger') {
-    baseHp = 100;
-    baseAtk = 25;
-    baseDef = 6;
-    baseCrit = 0.25;
-    speed = 0.048;
-  } else if (charClass === 'Sorcerer') {
-    baseHp = 90;
-    baseAtk = 34;
-    baseDef = 5;
-    baseCrit = 0.18;
-    speed = 0.04;
-  } else if (charClass === 'Paladin') {
-    // Tank anchor: biggest HP/DEF pool, weakest crit, slowest feet.
-    // Trades damage for the line-holding tank kit (shield + taunt + DR aura).
-    baseHp = 220;
-    baseAtk = 18;
-    baseDef = 20;
-    baseCrit = 0.05;
-    speed = 0.036;
-  } else if (charClass === 'Bard') {
-    // Bard: frail party buffer, fastest feet, weak solo damage
-    baseHp = 95;
-    baseAtk = 16;
-    baseDef = 7;
-    baseCrit = 0.12;
-    speed = 0.046;
-  } else {
-    // Cleric: frail support healer, slightly quick feet
-    baseHp = 85;
-    baseAtk = 14;
-    baseDef = 8;
-    baseCrit = 0.10;
-    speed = 0.044;
-  }
-
-  return {
-    maxHp: Math.round(baseHp),
-    atk: Math.round(baseAtk),
-    def: Math.round(baseDef),
-    critRate: baseCrit,
-    speed,
-    weaponName: `Trainee ${charClass === 'Berserker' ? 'Broadsword' : charClass === 'Ranger' ? 'Shortbow' : charClass === 'Sorcerer' ? 'Wooden Staff' : charClass === 'Paladin' ? 'Mace' : charClass === 'Bard' ? 'Lute' : 'Chime'}`,
-    armorName: 'Novice Leather Coat',
-    accessoryName: 'Copper Ring',
-  };
-}
-
-// --------------------------------------------------------------------------
-// Rarity loot: Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6 on tier base.
-// Tier base (shop equivalent): weapon 5+(t-1)*8; armor DEF 3+(t-1)*4, HP 20+(t-1)*15.
-// Uncommon/Rare are stats-only; only Epics carry effectId.
-// --------------------------------------------------------------------------
-
-export const RARITY_STAT_MULT: Record<EquipmentRarity, number> = {
-  Common: 1.0,
-  Uncommon: 1.15,
-  Rare: 1.35,
-  Epic: 1.6,
-};
-
-export const GEAR_SELL_MULT: Record<EquipmentRarity, number> = {
-  Common: 1.0,
-  Uncommon: 1.5,
-  Rare: 2.5,
-  Epic: 5.0,
-};
-
-export function gearSellPrice(tier: number, rarity: EquipmentRarity): number {
-  return Math.round(tier * 40 * (GEAR_SELL_MULT[rarity] ?? 1));
-}
-
-// --------------------------------------------------------------------------
-// Rarity colors: Common white, Uncommon green, Rare blue, Epic purple.
-// Single source of truth for UI text/border + canvas floating-text hex.
-// --------------------------------------------------------------------------
-
-export const RARITY_HEX: Record<EquipmentRarity, string> = {
-  Common: '#e2e8f0', // slate-200 white
-  Uncommon: '#4ade80', // green
-  Rare: '#60a5fa', // blue
-  Epic: '#c084fc', // purple
-};
-
-export const RARITY_TEXT_CLASS: Record<EquipmentRarity, string> = {
-  Common: 'text-slate-200',
-  Uncommon: 'text-emerald-400',
-  Rare: 'text-blue-400',
-  Epic: 'text-purple-400',
-};
-
-export const RARITY_BORDER_CLASS: Record<EquipmentRarity, string> = {
-  Common: 'border-slate-700/60',
-  Uncommon: 'border-emerald-500/50',
-  Rare: 'border-blue-500/50',
-  Epic: 'border-purple-500/60',
-};
-
-export function rarityHex(rarity: EquipmentRarity | undefined | null): string {
-  return RARITY_HEX[rarity ?? 'Common'] ?? RARITY_HEX.Common;
-}
-
-export function rarityTextClass(rarity: EquipmentRarity | undefined | null): string {
-  return RARITY_TEXT_CLASS[rarity ?? 'Common'] ?? RARITY_TEXT_CLASS.Common;
-}
-
-export function rarityBorderClass(rarity: EquipmentRarity | undefined | null): string {
-  return RARITY_BORDER_CLASS[rarity ?? 'Common'] ?? RARITY_BORDER_CLASS.Common;
-}
+// Rarity loot + epics + skill-mastery threshold (canonical in ./data/loot, ./data/skills).
+export const RARITY_STAT_MULT = DATA_RARITY_STAT_MULT;
+export const GEAR_SELL_MULT = DATA_GEAR_SELL_MULT;
+export const gearSellPrice = dataGearSellPrice;
+export const RARITY_HEX = DATA_RARITY_HEX;
+export const RARITY_TEXT_CLASS = DATA_RARITY_TEXT_CLASS;
+export const RARITY_BORDER_CLASS = DATA_RARITY_BORDER_CLASS;
+export const rarityHex = dataRarityHex;
+export const rarityTextClass = dataRarityTextClass;
+export const rarityBorderClass = dataRarityBorderClass;
+export const SKILL_EXP_TO_NEXT = DATA_SKILL_EXP_TO_NEXT;
+export type { EpicDef };
+export const EPIC_DEFS: EpicDef[] = DATA_EPIC_DEFS;
+export const epicEffectDescription = dataEpicEffectDescription;
 
 // --------------------------------------------------------------------------
 // Skill mastery: each cast grants 2 + cooldownSec EXP (longer CD = more).
@@ -422,42 +116,7 @@ export function rarityBorderClass(rarity: EquipmentRarity | undefined | null): s
 // still gating the climb to max.
 // --------------------------------------------------------------------------
 
-export const SKILL_EXP_TO_NEXT = 30;
-
-interface EpicDef {
-  name: string;
-  slot: 'weapon' | 'armor';
-  reqClass?: CharacterClass;
-  effectId: EquipmentEffectId;
-  effectValue: number;
-}
-
-// Boss-only Tier 5 epics. Weapons are class-locked, armors are open.
-export const EPIC_DEFS: EpicDef[] = [
-  { name: 'Kingsbane Reaver', slot: 'weapon', reqClass: 'Berserker', effectId: 'execution', effectValue: 0.6 },
-  { name: 'Cometfang Longbow', slot: 'weapon', reqClass: 'Ranger', effectId: 'deadeye', effectValue: 0.12 },
-  { name: 'Solar Cataclysm Staff', slot: 'weapon', reqClass: 'Sorcerer', effectId: 'meteorfall', effectValue: 0.35 },
-  { name: 'Dawnbreaker Gavel', slot: 'weapon', reqClass: 'Paladin', effectId: 'bossbane', effectValue: 0.5 },
-  { name: 'Fateweaver Lute', slot: 'weapon', reqClass: 'Bard', effectId: 'crescendo', effectValue: 0.25 },
-  { name: 'Bloodlord Carapace', slot: 'armor', effectId: 'lifesteal', effectValue: 0.10 },
-  { name: 'Windstalker Shroud', slot: 'armor', effectId: 'swiftwind', effectValue: 0.012 },
-  { name: 'Astral Veil Robe', slot: 'armor', effectId: 'focus', effectValue: 0.20 },
-  { name: 'Aegis of the Martyr', slot: 'armor', effectId: 'martyr', effectValue: 0.25 },
-];
-
-export function epicEffectDescription(effectId: EquipmentEffectId, value: number): string {
-  switch (effectId) {
-    case 'execution': return `Execute: +${Math.round(value * 100)}% damage vs targets below 30% HP`;
-    case 'deadeye': return `Deadeye: +${Math.round(value * 100)}% crit, crits hit x2.1`;
-    case 'meteorfall': return `Meteorfall: +${Math.round(value * 100)}% skill damage`;
-    case 'bossbane': return `Bossbane: +${Math.round(value * 100)}% damage vs bosses`;
-    case 'crescendo': return `Crescendo: Encore-buffed allies deal +${Math.round(value * 100)}% skill damage`;
-    case 'lifesteal': return `Lifesteal: heal ${Math.round(value * 100)}% of damage dealt`;
-    case 'swiftwind': return `Swiftwind: faster attacks`;
-    case 'focus': return `Focus: skills recharge ${Math.round(value * 100)}% faster`;
-    case 'martyr': return `Martyr: reflect ${Math.round(value * 100)}% damage, calmer under fire`;
-  }
-}
+// (deleted: skill threshold + epics now canonical in ./data/skills, ./data/loot.)
 
 export class GameSimulation {
   public hunters: Hunter[] = [];
@@ -610,15 +269,9 @@ export class GameSimulation {
     return serviceTime(b);
   }
 
-  /** Spawn multipliers for a difficulty level 1-10 (5 = standard 1x). */
+  /** Spawn multipliers for a difficulty level 1-10 (5 = standard 1x). Canonical in ./data/tuning. */
   public static difficultyMultipliers(level: number): { hp: number; atk: number; def: number; reward: number } {
-    const lv = Number.isFinite(level) ? Math.max(1, Math.min(10, Math.round(level))) : 5;
-    return {
-      hp: 0.5 + lv * 0.1,
-      atk: 0.55 + lv * 0.09,
-      def: 0.7 + lv * 0.06,
-      reward: 0.7 + lv * 0.06,
-    };
+    return dataDifficultyMultipliers(level);
   }
 
   /** Set world difficulty 1-10 (applies to newly spawned monsters). */
@@ -875,14 +528,11 @@ export class GameSimulation {
       this.addFloatingText('🏠 Town full! Upgrade Sanctuary Hall for +2 slots', SUMMON_PORTAL_POS.gx, SUMMON_PORTAL_POS.gy, '#fca5a5', 12);
       return null;
     }
-    const classes: CharacterClass[] = ['Berserker', 'Ranger', 'Sorcerer', 'Paladin', 'Cleric', 'Bard'];
-    const charClass = forcedClass || classes[Math.floor(Math.random() * classes.length)];
+    const charClass = forcedClass || PLAYABLE_CLASSES[Math.floor(Math.random() * PLAYABLE_CLASSES.length)];
 
     const base = baseStatsFor(charClass);
 
-    const firstName = HUNTER_FIRST_NAMES[Math.floor(Math.random() * HUNTER_FIRST_NAMES.length)];
-    const title = HUNTER_TITLES[Math.floor(Math.random() * HUNTER_TITLES.length)];
-    const fullName = `${firstName} ${title}`;
+    const fullName = makeHunterName();
 
     // Starting Skill
     const starterSkill = this.createClassSkill(charClass, 1);
@@ -980,128 +630,9 @@ export class GameSimulation {
     return hunter;
   }
 
+  /** Build a fresh Lv-1 class skill (canonical templates in ./data/classes). */
   private createClassSkill(charClass: CharacterClass, tier: number): Skill {
-    if (charClass === 'Berserker') {
-      return {
-        id: `skill-berserk-${tier}`,
-        name: tier === 1 ? 'Cleave Slash' : (tier === 2 ? 'Whirlwind' : 'Rage Berserk'),
-        level: 1,
-        maxLevel: 5,
-        cooldownMs: 4000,
-        lastUsedMs: 0,
-        damageMultiplier: 1.8 + tier * 0.4,
-        effectType: tier === 2 ? 'whirlwind' : 'slash',
-        description: 'Strikes viciously in a wide arc dealing heavy physical damage.',
-        exp: 0,
-        expToNext: SKILL_EXP_TO_NEXT
-      };
-    } else if (charClass === 'Ranger') {
-      return {
-        id: `skill-ranger-${tier}`,
-        name: tier === 1 ? 'Quick Shot' : (tier === 2 ? 'Rain of Arrows' : 'Piercing Comet'),
-        level: 1,
-        maxLevel: 5,
-        cooldownMs: 3500,
-        lastUsedMs: 0,
-        damageMultiplier: 1.6 + tier * 0.35,
-        effectType: 'multishot',
-        description: 'Fires rapid enchanted arrows piercing monster defenses.',
-        exp: 0,
-        expToNext: SKILL_EXP_TO_NEXT
-      };
-    } else if (charClass === 'Sorcerer') {
-      return {
-        id: `skill-sorc-${tier}`,
-        name: tier === 1 ? 'Arcane Bolt' : (tier === 2 ? 'Meteor Strike' : 'Solar Flare'),
-        level: 1,
-        maxLevel: 5,
-        cooldownMs: 5000,
-        lastUsedMs: 0,
-        damageMultiplier: 2.2 + tier * 0.5,
-        effectType: 'meteor',
-        description: 'Summons a blazing arcane meteor blasting all surrounding beasts.',
-        exp: 0,
-        expToNext: SKILL_EXP_TO_NEXT
-      };
-    } else if (charClass === 'Paladin') {
-      // Tank kit: T1 self-shield + damage, T2 big shield + AoE taunt + party
-      // guard, T3 damage + shield refresh + AoE taunt. Longer CDs than DPS
-      // classes so taunt uptime always leaves gaps (bosses stay honest).
-      if (tier === 2) {
-        return {
-          id: `skill-pala-${tier}`,
-          name: 'Radiant Aegis',
-          level: 1,
-          maxLevel: 5,
-          cooldownMs: 6000,
-          lastUsedMs: 0,
-          damageMultiplier: 1.2,
-          effectType: 'smite',
-          description: 'Bulwark of light: big self-shield, taunts nearby beasts, guards the party.',
-          exp: 0,
-          expToNext: SKILL_EXP_TO_NEXT
-        };
-      } else if (tier === 3) {
-        return {
-          id: `skill-pala-${tier}`,
-          name: 'Judgement Pillar',
-          level: 1,
-          maxLevel: 5,
-          cooldownMs: 8000,
-          lastUsedMs: 0,
-          damageMultiplier: 1.7 + tier * 0.35,
-          effectType: 'smite',
-          description: 'Pillar of judgement: heavy damage, refreshes shield, taunts nearby beasts.',
-          exp: 0,
-          expToNext: SKILL_EXP_TO_NEXT
-        };
-      }
-      return {
-        id: `skill-pala-${tier}`,
-        name: 'Holy Smite',
-        level: 1,
-        maxLevel: 5,
-        cooldownMs: 4500,
-        lastUsedMs: 0,
-        damageMultiplier: 1.7 + tier * 0.35,
-        effectType: 'smite',
-        description: 'Divine wrath that damages the foe and raises a self-shield.',
-        exp: 0,
-        expToNext: SKILL_EXP_TO_NEXT
-      };
-    } else if (charClass === 'Bard') {
-      return {
-        id: `skill-bard-${tier}`,
-        name: tier === 1 ? 'Dissonant Chord' : (tier === 2 ? 'Encore Anthem' : 'Golden Finale'),
-        level: 1,
-        maxLevel: 5,
-        cooldownMs: tier === 2 ? 6000 : (tier === 3 ? 8000 : 4000),
-        lastUsedMs: 0,
-        damageMultiplier: tier === 2 ? 0 : (tier === 1 ? 1.4 + tier * 0.3 : 2.0 + tier * 0.4),
-        effectType: tier === 1 ? 'ballad' : 'encore',
-        description: tier === 1
-          ? 'Strums a jarring chord dealing sonic damage.'
-          : tier === 2
-            ? 'Sings an anthem buffing nearby allies +20% ATK for 8s.'
-            : 'Grand finale: sonic damage plus +10% gold fever for the party (15s).',
-        exp: 0,
-        expToNext: SKILL_EXP_TO_NEXT
-      };
-    } else {
-      return {
-        id: `skill-cleric-${tier}`,
-        name: tier === 1 ? 'Mend Wounds' : (tier === 2 ? 'Soothing Radiance' : 'Renewing Dawn'),
-        level: 1,
-        maxLevel: 5,
-        cooldownMs: 5000,
-        lastUsedMs: 0,
-        damageMultiplier: 2.0 + tier * 0.4,
-        effectType: 'heal',
-        description: 'Channels holy light to heal the most wounded nearby ally.',
-        exp: 0,
-        expToNext: SKILL_EXP_TO_NEXT
-      };
-    }
+    return dataCreateClassSkill(charClass, tier);
   }
 
   /** Retrain all hunters to Lv 1 trainee state (keeps identity, deaths, position). */
@@ -1222,108 +753,19 @@ export class GameSimulation {
       gy = 42 + Math.random() * 14;
     }
 
-    let name = 'Forest Slime';
-    let level = 1;
-    let hp = 45;
-    let atk = 10;
-    let def = 3;
-    let expReward = 15;
-    let goldReward = 8;
-    let dropName = 'Slime Gel';
-    let dropIcon: ItemDrop['iconType'] = 'magic_orb';
-
-    if (type === 'slime') {
-      name = 'Emerald Slime';
-      level = 1;
-      hp = 60;
-      atk = 14;
-      def = 3;
-      expReward = 16;
-      goldReward = 9;
-      dropName = 'Slime Essence';
-      dropIcon = 'magic_orb';
-    } else if (type === 'goblin') {
-      name = 'Goblin Scavenger';
-      level = 3;
-      hp = 95;
-      atk = 22;
-      def = 4;
-      expReward = 25;
-      goldReward = 16;
-      dropName = 'Goblin Horn';
-      dropIcon = 'horn';
-    } else if (type === 'wolf') {
-      name = 'Shadow Wolf';
-      level = 5;
-      hp = 144;
-      atk = 33;
-      def = 6;
-      expReward = 38;
-      goldReward = 23;
-      dropName = 'Dire Wolf Pelt';
-      dropIcon = 'pelt';
-    } else if (type === 'skeleton') {
-      name = 'Undead Skeleton';
-      level = 6;
-      hp = 190;
-      atk = 38;
-      def = 10;
-      expReward = 50;
-      goldReward = 31;
-      dropName = 'Curse Bone';
-      dropIcon = 'bone';
-    } else if (type === 'ghoul') {
-      name = 'Graveyard Ghoul';
-      level = 8;
-      hp = 258;
-      atk = 47;
-      def = 12;
-      expReward = 73;
-      goldReward = 45;
-      dropName = 'Venom Fang';
-      dropIcon = 'fang';
-    } else if (type === 'wight') {
-      name = 'Grave Wight';
-      level = 9;
-      hp = 300;
-      atk = 55;
-      def = 14;
-      expReward = 90;
-      goldReward = 55;
-      dropName = 'Wight Shard';
-      dropIcon = 'bone';
-    } else if (type === 'drake') {
-      name = 'Magma Drake';
-      level = 12;
-      hp = 477;
-      atk = 78;
-      def = 23;
-      expReward = 150;
-      goldReward = 107;
-      dropName = 'Dragon Scale';
-      dropIcon = 'dragon_scale';
-    } else if (type === 'golem') {
-      name = 'Magma Golem';
-      level = 14;
-      hp = 650;
-      atk = 95;
-      def = 28;
-      expReward = 220;
-      goldReward = 150;
-      dropName = 'Magma Core';
-      dropIcon = 'dragon_scale';
-    } else if (type === 'boss_lich') {
-      name = '☠ EVIL LICH LORD ☠';
-      level = 15;
-      hp = 1500;
-      atk = 95;
-      def = 28;
-      expReward = 450;
-      goldReward = 350;
-      dropName = 'Dark Nether Orb';
-      dropIcon = 'magic_orb';
-      isBoss = true;
-    }
+    // Base stats come from the monster roster (./data/monsters) — to add a
+    // monster, add an archetype row there; scaling below stays untouched.
+    const arch = MONSTER_ARCHETYPES[type];
+    let name = arch.name;
+    let level = arch.level;
+    let hp = arch.hp;
+    let atk = arch.atk;
+    let def = arch.def;
+    let expReward = arch.expReward;
+    let goldReward = arch.goldReward;
+    let dropName = arch.dropName;
+    let dropIcon: ItemDrop['iconType'] = arch.dropIcon;
+    if (arch.isBoss) isBoss = true;
 
     // World difficulty scaling (applies at spawn time)
     const diff = GameSimulation.difficultyMultipliers(this.difficulty);
@@ -1844,6 +1286,19 @@ export class GameSimulation {
                       hunter.stateTimer = 2;
                       break;
                     }
+                } else if (building.type === 'TRAINING_ACADEMY') {
+                  // Broke hunters with a READY skill would burn a full timed
+                  // service for nothing, then scoreNeeds would send them
+                  // straight back (academy death-loop: never hunts, never
+                  // earns). Bounce to the hub so they go earn gold first.
+                  if (!hasAffordableReadySkill(hunter)) {
+                    const need = cheapestReadyCost(hunter);
+                    this.addFloatingText(Number.isFinite(need) ? `📜 Need ${need}g for training` : `📜 No skill ready for training`, hunter.gx, hunter.gy, '#fca5a5', 11);
+                    hunter.targetBuildingId = null;
+                    hunter.state = 'WANDERING_TOWN';
+                    hunter.stateTimer = 2;
+                    break;
+                  }
                 }
                 this.executeBuildingVisit(hunter, building);
               }
@@ -2089,10 +1544,12 @@ export class GameSimulation {
 
     // Cleric heal AI: if a heal skill is ready and a hurt ally is near,
     // mend them INSTEAD of attacking this tick (no damage to the monster,
-    // no EXP — support tax, transaction-free).
+    // no hunter EXP — support tax, transaction-free). The mend itself still
+    // grants skill mastery (like Bard Encore) so healers can go READY and
+    // promote at the Academy — without this, Clerics could never use it.
     if (hunter.charClass === 'Cleric') {
       const nowMs = Date.now();
-      const healSkill = hunter.skills.find(s => s.effectType === 'heal' && nowMs - s.lastUsedMs >= s.cooldownMs) ?? null;
+      const healSkill = hunter.skills.find(s => s.effectType === 'heal' && nowMs - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s)) ?? null;
       if (healSkill) {
         const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
         const partyIds = party ? new Set(this.partyMembers(hunter).map(m => m.id)) : null;
@@ -2113,6 +1570,15 @@ export class GameSimulation {
           healSkill.lastUsedMs = nowMs;
           const heal = Math.round(t.maxHp * 0.25 + hunter.atk * 0.8);
           t.hp = Math.min(this.effectiveMaxHp(t), t.hp + heal);
+          // Usage-based mastery for the mend (no gray gating for support).
+          if (healSkill.level < healSkill.maxLevel) {
+            const curExp = typeof healSkill.exp === 'number' && Number.isFinite(healSkill.exp) ? healSkill.exp : 0;
+            const need = typeof healSkill.expToNext === 'number' && Number.isFinite(healSkill.expToNext) ? healSkill.expToNext : SKILL_EXP_TO_NEXT;
+            healSkill.exp = Math.min(need, curExp + skillExpPerCast(healSkill.cooldownMs));
+            if (healSkill.exp >= need) {
+              this.addFloatingText(`✨ ${healSkill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
+            }
+          }
           this.addFloatingText(`+${heal}`, t.gx, t.gy - 0.5, '#4ade80', 12);
           this.skillVfxs.push({
             id: `vfx-heal-${Date.now()}-${Math.random()}`,
@@ -2196,6 +1662,9 @@ export class GameSimulation {
     const now = Date.now();
     let readySkill: Skill | null = null;
     for (const s of hunter.skills) {
+      // Pure-buff Encore Anthem (damage 0) is handled by the Bard support
+      // path above — never waste a damage cast tick on it.
+      if (s.effectType === 'encore' && (s.damageMultiplier ?? 0) === 0) continue;
       if (now - s.lastUsedMs >= this.effectiveCooldownMs(hunter, s) && (!readySkill || s.lastUsedMs < readySkill.lastUsedMs)) {
         readySkill = s;
       }
@@ -2327,23 +1796,15 @@ export class GameSimulation {
   // --------------------------------------------------------------------------
 
   private zoneGearTier(zone: 1 | 2 | 3): number {
-    return zone === 1 ? 2 : (zone === 2 ? 3 : 4);
+    return dataZoneGearTier(zone);
   }
 
   private classWeaponNoun(charClass: CharacterClass): string {
-    if (charClass === 'Berserker') return 'Cleaver';
-    if (charClass === 'Ranger') return 'Bow';
-    if (charClass === 'Sorcerer') return 'Staff';
-    if (charClass === 'Bard') return 'Lute';
-    return 'Gavel';
+    return dataClassWeaponNoun(charClass);
   }
 
   private classArmorNoun(charClass: CharacterClass): string {
-    if (charClass === 'Berserker') return 'Plate';
-    if (charClass === 'Ranger') return 'Garb';
-    if (charClass === 'Sorcerer') return 'Robe';
-    if (charClass === 'Bard') return 'Cloak';
-    return 'Aegis';
+    return dataClassArmorNoun(charClass);
   }
 
   private buildStatGear(tier: number, rarity: EquipmentRarity, slot: 'weapon' | 'armor', forClass: CharacterClass, monster: Monster): ItemDrop {
@@ -2862,7 +2323,7 @@ export class GameSimulation {
       tavern: moodU < tavernFrac ? (tavernFrac - moodU) / tavernFrac : 0,            // town: <tavernMood goes, lower = more urgent
       lab: (labOk || tonicOk) ? 0.2 + 0.6 * Math.max(elixirNeed / Math.max(1, this.elixirCapacity()), tonicNeed / Math.max(1, this.tonicCapacity())) : 0,
       forge: forgeOk ? 0.5 : 0,
-      academy: hunter.skills.some(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : SKILL_EXP_TO_NEXT)) ? 0.45 : 0,  // NEVER beats a healthy hunt alone
+      academy: hasAffordableReadySkill(hunter) ? 0.45 : 0,  // NEVER beats a healthy hunt alone; 0 when broke (no academy death-loop)
       clinic: hpU < 0.7 ? (0.7 - hpU) / 0.7 : 0,
       transit: 0,   // filled by caller (field only)
       hunt: this.agentConfig.huntBaseline,    // baseline: needs must earn the interruption
@@ -3044,12 +2505,13 @@ export class GameSimulation {
           // +1 rank per visit for gold (checked at completion, no freebie).
           // Lowest rank first so 2nd/3rd skills catch up instead of skills[0]
           // hogging. More READY skills re-queue via town hub (forge pattern).
-          const ready = hunter.skills
-            .filter(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : SKILL_EXP_TO_NEXT))
-            .sort((a, b) => a.level - b.level);
+          // Broke hunters never reach here (academy door guard bounces them),
+          // so a failed cost check just ends the visit — the hub routes them
+          // to earn gold instead of looping the Academy.
+          const ready = readySkills(hunter);
           if (ready.length === 0) break;
           const skill = ready[0];
-          const cost = 40 + 25 * skill.level;
+          const cost = academyCostFor(skill.level);
           if (hunter.gold < cost) {
             this.addFloatingText(`📜 Need ${cost}g for ${skill.name}`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
             break;
@@ -3076,7 +2538,7 @@ export class GameSimulation {
 
           this.recordStoreTransaction(serviceBuilding, 25, cost);
 
-          const moreReady = hunter.skills.some(s => s.level < s.maxLevel && s.exp >= s.expToNext && hunter.gold >= 40 + 25 * s.level);
+          const moreReady = hasAffordableReadySkill(hunter);
           if (moreReady) {
             // Commission breather: another promotion is already affordable,
             // so step out briefly and let the hub re-queue the next visit.
@@ -3213,8 +2675,7 @@ export class GameSimulation {
   }
 
   private getEquipmentPrefix(tier: number): string {
-    const prefixes = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Dragonforged'];
-    return prefixes[Math.min(tier - 1, prefixes.length - 1)];
+    return dataGetEquipmentPrefix(tier);
   }
 
   // --------------------------------------------------------------------------
