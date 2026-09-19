@@ -18,15 +18,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
 }) => {
   const [isOpen, setIsOpen] = React.useState(true);
 
-  const getRarityStyle = (rarity: string) => {
-    switch (rarity) {
-      case 'Legendary': return { badge: 'text-amber-400 border-amber-500/40 bg-amber-500/10', edge: 'border-l-amber-400' };
-      case 'Heroic': return { badge: 'text-red-400 border-red-500/40 bg-red-500/10', edge: 'border-l-red-400' };
-      case 'Superior': return { badge: 'text-purple-400 border-purple-500/40 bg-purple-500/10', edge: 'border-l-purple-400' };
-      case 'Rare': return { badge: 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10', edge: 'border-l-cyan-400' };
-      default: return { badge: 'text-slate-300 border-slate-600/40 bg-slate-800/40', edge: 'border-l-slate-500' };
-    }
-  };
+  const rowStyle = { badge: 'text-slate-300 border-slate-600/40 bg-slate-800/40', edge: 'border-l-slate-500' };
 
   const getActionBadge = (state: Hunter['state']) => {
     switch (state) {
@@ -90,7 +82,6 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
           )}
           {hunters.map(hunter => {
             const isSelected = selectedHunterId === hunter.id;
-            const rarityStyle = getRarityStyle(hunter.rarity);
             const action = getActionBadge(hunter.state);
             const hpRatio = Math.max(0, Math.min(1, hunter.hp / (hunter.maxHp + hunter.armor.hpBonus + hunter.accessory.hpBonus)));
             const moodRatio = Math.max(0, Math.min(1, (hunter.mood ?? 100) / 100));
@@ -99,7 +90,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
               <button
                 key={hunter.id}
                 onClick={() => onSelectHunter(hunter)}
-                className={`w-full p-2 rounded-xl border border-l-4 text-left transition-all cursor-pointer ${rarityStyle.edge} ${
+                className={`w-full p-2 rounded-xl border border-l-4 text-left transition-all cursor-pointer ${rowStyle.edge} ${
                   isSelected
                     ? 'border-amber-400 bg-amber-500/15 shadow-lg shadow-amber-500/20'
                     : 'border-slate-700/70 bg-slate-800/70 hover:bg-slate-800 hover:border-slate-600'
@@ -126,8 +117,8 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-1 mt-0.5">
-                      <span className={`text-[9px] font-black uppercase px-1 rounded border ${rarityStyle.badge}`}>
-                        {hunter.rarity}
+                      <span className={`text-[9px] font-black uppercase px-1 rounded border ${rowStyle.badge}`}>
+                        {hunter.charClass}
                       </span>
                       <span className={`text-[10px] font-medium truncate ${action.color}`}>
                         {action.text}

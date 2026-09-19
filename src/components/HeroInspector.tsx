@@ -3,7 +3,7 @@ import {
   X, Shield, Swords, Sparkles, Heart, Zap, Crosshair, 
   Package, Trophy, Eye, ArrowUpCircle, Compass 
 } from 'lucide-react';
-import { Hunter, HunterRarity } from '../types';
+import { Hunter } from '../types';
 import { partyColor } from '../game/simulation';
 
 interface HeroInspectorProps {
@@ -23,20 +23,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
   partyMembers,
   isPartyLeader
 }) => {
-  const getRarityBadge = (rarity: HunterRarity) => {
-    switch (rarity) {
-      case 'Legendary':
-        return { border: 'border-amber-400', bg: 'bg-amber-500/20', text: 'text-amber-300', glow: 'shadow-amber-500/30' };
-      case 'Heroic':
-        return { border: 'border-red-500', bg: 'bg-red-500/20', text: 'text-red-400', glow: 'shadow-red-500/30' };
-      case 'Superior':
-        return { border: 'border-purple-500', bg: 'bg-purple-500/20', text: 'text-purple-300', glow: 'shadow-purple-500/30' };
-      case 'Rare':
-        return { border: 'border-cyan-500', bg: 'bg-cyan-500/20', text: 'text-cyan-300', glow: 'shadow-cyan-500/30' };
-      default:
-        return { border: 'border-slate-500', bg: 'bg-slate-500/20', text: 'text-slate-300', glow: 'shadow-slate-500/20' };
-    }
-  };
+  const frameStyle = { border: 'border-slate-500', bg: 'bg-slate-500/20', text: 'text-slate-300', glow: 'shadow-slate-500/20' };
 
   const getStatusDisplay = (state: Hunter['state']) => {
     switch (state) {
@@ -69,7 +56,6 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
     }
   };
 
-  const rarityStyle = getRarityBadge(hunter.rarity);
   const status = getStatusDisplay(hunter.state);
   const effectiveMaxHp = hunter.maxHp + hunter.armor.hpBonus + hunter.accessory.hpBonus;
   const hpPercent = Math.max(0, Math.min(100, (hunter.hp / effectiveMaxHp) * 100));
@@ -81,7 +67,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
   return (
     <div className="absolute right-3 top-20 bottom-3 w-84 max-w-[calc(100vw-24px)] z-20 flex flex-col bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl shadow-black/60 overflow-hidden text-slate-200 pointer-events-auto font-sans">
       {/* Header Banner */}
-      <div className={`p-4 border-b border-slate-700/60 relative ${rarityStyle.bg}`}>
+      <div className={`p-4 border-b border-slate-700/60 relative ${frameStyle.bg}`}>
         <button
           onClick={onClose}
           className="absolute top-3 right-3 p-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
@@ -90,8 +76,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
         </button>
 
         <div className="flex items-center gap-3">
-          {/* Class Avatar & Rarity Frame */}
-          <div className={`w-14 h-14 rounded-xl border-2 ${rarityStyle.border} ${rarityStyle.bg} shadow-lg ${rarityStyle.glow} flex flex-col items-center justify-center p-1 relative`}>
+          {/* Class Avatar Frame */}
+          <div className={`w-14 h-14 rounded-xl border-2 ${frameStyle.border} ${frameStyle.bg} shadow-lg ${frameStyle.glow} flex flex-col items-center justify-center p-1 relative`}>
             <span className="text-xl">
               {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : '⚕️'}
             </span>
@@ -102,8 +88,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
 
           <div className="flex-1 min-w-0 pr-6">
             <div className="flex items-center gap-1.5">
-              <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${rarityStyle.border} ${rarityStyle.text}`}>
-                {hunter.rarity}
+              <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${frameStyle.border} ${frameStyle.text}`}>
+                {hunter.charClass}
               </span>
               <span className="text-xs font-mono font-bold text-amber-400">
                 Lv.{hunter.level}

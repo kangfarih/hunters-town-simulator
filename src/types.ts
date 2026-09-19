@@ -1,7 +1,5 @@
 export type CharacterClass = 'Berserker' | 'Ranger' | 'Sorcerer' | 'Paladin' | 'Cleric';
 
-export type HunterRarity = 'Normal' | 'Rare' | 'Superior' | 'Heroic' | 'Legendary';
-
 export type HunterState = 
   | 'SPAWNING'
   | 'REGISTERING'
@@ -58,7 +56,6 @@ export interface Hunter {
   id: string;
   name: string;
   charClass: CharacterClass;
-  rarity: HunterRarity;
   level: number;
   exp: number;
   expToNext: number;
