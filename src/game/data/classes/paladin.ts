@@ -2,7 +2,7 @@ import type { ClassKit } from './types';
 
 export const PaladinKit: ClassKit = {
   id: 'Paladin',
-  baseHp: 220,
+  baseHp: 300, // TTK tune: 220->300
   baseAtk: 18,
   baseDef: 20,
   baseCrit: 0.05,

@@ -2,7 +2,7 @@ import type { ClassKit } from './types';
 
 export const RangerKit: ClassKit = {
   id: 'Ranger',
-  baseHp: 100,
+  baseHp: 140, // TTK tune: 100->140
   baseAtk: 25,
   baseDef: 6,
   baseCrit: 0.25,

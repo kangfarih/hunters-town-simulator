@@ -19,7 +19,7 @@ export interface AgentConfig {
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   retreatHpFrac: 0.20,
-  dangerHits: 6,
+  dangerHits: 7, // TTK tune: was 6
   grayGap: 3,
   huntBaseline: 0.5,
   tavernMood: 65,

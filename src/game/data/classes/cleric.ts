@@ -2,7 +2,7 @@ import type { ClassKit } from './types';
 
 export const ClericKit: ClassKit = {
   id: 'Cleric',
-  baseHp: 85,
+  baseHp: 125, // TTK tune: 85->125
   baseAtk: 14,
   baseDef: 8,
   baseCrit: 0.10,
@@ -10,15 +10,15 @@ export const ClericKit: ClassKit = {
   traineeWeapon: 'Trainee Chime',
   weaponNoun: 'Gavel',
   armorNoun: 'Aegis',
-  notes: 'Frail support healer, slightly quick feet.',
+  notes: 'Support healer, slightly quick feet.',
   skillTemplates: [
     {
       idPrefix: 'cleric',
       name: 'Mend Wounds',
-      cooldownMs: 5000,
+      cooldownMs: 4000, // TTK tune: 5000->4000
       damageMultiplier: 1.0,
       effectType: 'heal',
-      description: 'Mends the most wounded ally in r5 for 25% maxHp + 0.8 ATK (below 75% HP).',
+      description: 'Mends the most wounded ally in r5 for 30% maxHp + 1.0 ATK (below 75% HP).', // TTK tune: was 25% maxHp + 0.8 ATK
     },
     {
       idPrefix: 'cleric',

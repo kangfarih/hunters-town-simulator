@@ -1386,10 +1386,10 @@ export class GameSimulation {
   // 5. COMBAT & SKILL ANIMATION
   // --------------------------------------------------------------------------
 
-  /** Mood multiplier: miserable hunters fight at 75%, ecstatic ones at 125%. */
+  /** Mood multiplier: miserable hunters fight at 85%, ecstatic ones at 115%. */ // TTK tune: was 75%/125%
   public moodScale(hunter: Hunter): number {
     const mood = Math.max(0, Math.min(100, hunter.mood));
-    return 0.75 + (mood / 100) * 0.5;
+    return 0.85 + (mood / 100) * 0.3; // TTK tune: was 0.75 + (mood/100)*0.5 (band 0.75-1.25 -> 0.85-1.15)
   }
 
   /** Effective attack after mood scaling and tavern morale + tonic + Encore buffs. */
@@ -1473,7 +1473,7 @@ export class GameSimulation {
     if (monster.level > hunter.level + 4) return true;
     const size = partySizeOverride ?? (this.agentConfig.partiesEnabled ? this.livePartySize(hunter) : 1);
     const mult = 1 + 0.25 * Math.max(0, size - 1);
-    const estHit = monster.atk - this.effectiveDef(hunter) * mult * 0.5;
+    const estHit = monster.atk - this.effectiveDef(hunter) * mult * 0.65; // TTK tune: 0.5->0.65
     if (estHit <= 0) return false;
     // Tank lens: live shield counts as HP, and Paladins hold the line longer
     // (danger threshold -2 hits, floor 2) so the anchor doesn't bounce off
@@ -1838,12 +1838,12 @@ export class GameSimulation {
       }
       if (t1 && hurt5.length > 0) {
         // T1: single-target mend on the most wounded ally in r5
-        // (25% maxHp + 0.8 ATK, scaled by damageMultiplier, base 1.0).
+        // (30% maxHp + 1.0 ATK, scaled by damageMultiplier, base 1.0). // TTK tune: was 25% + 0.8
         let target = hurt5[0];
         for (const h of hurt5) if (hpFrac(h) < hpFrac(target)) target = h;
         t1.lastUsedMs = nowMs;
         const maxHp = this.effectiveMaxHp(target);
-        const heal = Math.round((maxHp * 0.25 + this.effectiveAtk(hunter) * 0.8) * t1.damageMultiplier);
+        const heal = Math.round((maxHp * 0.30 + this.effectiveAtk(hunter) * 1.0) * t1.damageMultiplier); // TTK tune: was 0.25 maxHp + 0.8 ATK
         target.hp = Math.min(maxHp, target.hp + heal);
         // Usage-based mastery for the mend (no gray gating for support).
         this.grantSkillMastery(hunter, t1);
@@ -1994,7 +1994,7 @@ export class GameSimulation {
     }
 
     if (isCrit) {
-      damage *= deadeye > 0 ? 2.1 : 1.75;
+      damage *= deadeye > 0 ? 1.8 : 1.5; // TTK tune: was 2.1 : 1.75
     }
     // Execution (Kingsbane): +60% vs targets below 30% HP. Bossbane: +50% vs boss.
     const execution = this.equippedEffect(hunter, 'execution');
@@ -3021,9 +3021,9 @@ export class GameSimulation {
         // Attack hunter
         monster.attackCooldown -= dt;
         if (monster.attackCooldown <= 0) {
-          monster.attackCooldown = 1.8;
+          monster.attackCooldown = 2.2; // TTK tune: was 1.8 (spawn initial 1.5 untouched)
           monster.attackAnimTimer = 0.35;
-          const dmg = Math.max(3, Math.round(monster.atk - this.effectiveDef(hunter) * 0.5));
+          const dmg = Math.max(3, Math.round(monster.atk - this.effectiveDef(hunter) * 0.65)); // TTK tune: 0.5->0.65
           // Paladin absorb shield soaks damage first (tank kit). A raised
           // shield also steadies morale: mood damage halved while it holds.
           const hadShield = (hunter.shieldHp ?? 0) > 0;
@@ -3040,7 +3040,7 @@ export class GameSimulation {
           }
           // Getting mauled ruins the mood (which in turn scales combat stats).
           // A raised shield + Martyr each halve the blow to morale.
-          const moodHit = (5 + Math.random() * 3) * (martyr > 0 ? 0.5 : 1) * (hadShield ? 0.5 : 1);
+          const moodHit = (3 + Math.random() * 2) * (martyr > 0 ? 0.5 : 1) * (hadShield ? 0.5 : 1); // TTK tune: was 5+rand*3
           hunter.mood = Math.max(0, hunter.mood - moodHit);
           this.addFloatingText(`-${dmg}`, hunter.gx, hunter.gy, '#f43f5e', 11);
 
@@ -3329,7 +3329,7 @@ export class GameSimulation {
     let bestScore = -Infinity;
     for (const m of this.monsters) {
       if (m.hp <= 0) continue;
-      const estHit = m.atk - this.effectiveDef(hunter) * 0.5;
+      const estHit = m.atk - this.effectiveDef(hunter) * 0.65; // TTK tune: 0.5->0.65
       const hitsToDie = estHit <= 0 ? 999 : hunter.hp / estHit; // hits-to-die
       // Spread hunters across prey: discount already-claimed monsters so
       // desperate picks don't all pile onto the same least-bad fight.

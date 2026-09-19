@@ -2,7 +2,7 @@ import type { ClassKit } from './types';
 
 export const SorcererKit: ClassKit = {
   id: 'Sorcerer',
-  baseHp: 90,
+  baseHp: 130, // TTK tune: 90->130
   baseAtk: 34,
   baseDef: 5,
   baseCrit: 0.18,

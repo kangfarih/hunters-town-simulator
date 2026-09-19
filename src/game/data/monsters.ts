@@ -27,7 +27,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'slime',
     name: 'Emerald Slime',
     level: 1,
-    hp: 60,
+    hp: 78, // TTK tune: 60->78 (+30%)
     atk: 14,
     def: 3,
     expReward: 16,
@@ -39,7 +39,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'goblin',
     name: 'Goblin Scavenger',
     level: 3,
-    hp: 95,
+    hp: 124, // TTK tune: 95->124 (+30%)
     atk: 22,
     def: 4,
     expReward: 25,
@@ -51,7 +51,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'wolf',
     name: 'Shadow Wolf',
     level: 5,
-    hp: 144,
+    hp: 250, // TTK tune: 144->250
     atk: 33,
     def: 6,
     expReward: 38,
@@ -63,7 +63,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'skeleton',
     name: 'Undead Skeleton',
     level: 6,
-    hp: 190,
+    hp: 331, // TTK tune: 190->331 (same x1.744 ratio as ghoul 258->450)
     atk: 38,
     def: 10,
     expReward: 50,
@@ -75,7 +75,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'ghoul',
     name: 'Graveyard Ghoul',
     level: 8,
-    hp: 258,
+    hp: 450, // TTK tune: 258->450
     atk: 47,
     def: 12,
     expReward: 73,
@@ -87,7 +87,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'wight',
     name: 'Grave Wight',
     level: 9,
-    hp: 300,
+    hp: 520, // TTK tune: 300->520
     atk: 55,
     def: 14,
     expReward: 90,
@@ -99,7 +99,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'drake',
     name: 'Magma Drake',
     level: 12,
-    hp: 477,
+    hp: 800, // TTK tune: 477->800
     atk: 78,
     def: 23,
     expReward: 150,
@@ -111,7 +111,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'golem',
     name: 'Magma Golem',
     level: 14,
-    hp: 650,
+    hp: 1100, // TTK tune: 650->1100
     atk: 95,
     def: 28,
     expReward: 220,
@@ -123,7 +123,7 @@ export const MONSTER_ARCHETYPES: Record<MonsterType, MonsterArchetype> = {
     type: 'boss_lich',
     name: '☠ EVIL LICH LORD ☠',
     level: 15,
-    hp: 1500,
+    hp: 2600, // TTK tune: 1500->2600
     atk: 95,
     def: 28,
     expReward: 450,

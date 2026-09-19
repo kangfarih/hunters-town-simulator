@@ -96,7 +96,7 @@ export const EPIC_DEFS: EpicDef[] = [
 export function epicEffectDescription(effectId: EquipmentEffectId, value: number): string {
   switch (effectId) {
     case 'execution': return `Execute: +${Math.round(value * 100)}% damage vs targets below 30% HP`;
-    case 'deadeye': return `Deadeye: +${Math.round(value * 100)}% crit, crits hit x2.1`;
+    case 'deadeye': return `Deadeye: +${Math.round(value * 100)}% crit, crits hit x1.8`;
     case 'meteorfall': return `Meteorfall: +${Math.round(value * 100)}% skill damage`;
     case 'bossbane': return `Bossbane: +${Math.round(value * 100)}% damage vs bosses`;
     case 'crescendo': return `Crescendo: Encore-buffed allies deal +${Math.round(value * 100)}% skill damage`;
