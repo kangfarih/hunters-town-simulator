@@ -2037,8 +2037,8 @@ export class GameSimulation {
 
   // --------------------------------------------------------------------------
   // Rarity loot rolls (Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6).
-  // Bosses: 35% epic (smart loot 70% killer class). Normals: Uncommon 6%
-  // (wolf+), Rare 1.5% (ghoul/drake). Gray kills: no gear roll.
+  // Bosses: 35% epic (smart loot 70% killer class). Normals: Uncommon 40%
+  // (wolf+), Rare 10% (ghoul/drake). Gray kills: no gear roll.
   // --------------------------------------------------------------------------
 
   private zoneGearTier(zone: 1 | 2 | 3): number {
@@ -2125,8 +2125,8 @@ export class GameSimulation {
     if (monster.type === 'slime' || monster.type === 'goblin') return null;
     const canRare = monster.type === 'ghoul' || monster.type === 'drake';
     let rarity: EquipmentRarity | null = null;
-    if (canRare && Math.random() < 0.015) rarity = 'Rare';
-    else if (Math.random() < 0.06) rarity = 'Uncommon';
+    if (canRare && Math.random() < 0.10) rarity = 'Rare';
+    else if (Math.random() < 0.40) rarity = 'Uncommon';
     if (!rarity) return null;
     const slot = Math.random() < 0.6 ? 'weapon' : 'armor';
     return this.buildStatGear(this.zoneGearTier(monster.zone), rarity, slot, killer.charClass, monster);
