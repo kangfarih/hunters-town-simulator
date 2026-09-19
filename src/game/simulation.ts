@@ -545,7 +545,7 @@ export class GameSimulation {
 
     const base = baseStatsFor(charClass);
 
-    const fullName = makeHunterName();
+    const fullName = makeHunterName(this.hunters.map(h => h.name));
 
     // Starting Skill
     const starterSkill = this.createClassSkill(charClass, 1);
@@ -3773,7 +3773,16 @@ export class GameSimulation {
       }
       // Hunters re-acquire live targets too (saved monster IDs may be stale)
       let rescued = 0;
+      // Pre-existing saves may hold duplicate hunter names (old random gen
+      // never checked the roster) — rename repeats so every name is unique.
+      const seenNames = new Set<string>();
       for (const h of sim.hunters) {
+        if (typeof h.name === 'string' && h.name.trim() && !seenNames.has(h.name.trim())) {
+          seenNames.add(h.name.trim());
+        } else {
+          h.name = makeHunterName(seenNames);
+          seenNames.add(h.name);
+        }
         h.targetMonsterId = null;
         // Field parties are runtime-only: they reform live, so every load
         // dissolves them (parties Map itself is never snapshotted).
