@@ -796,7 +796,6 @@ export class GameSimulation {
       inventory: [],
       maxInventorySlots: 12,
       skills: [starterSkill],
-      skillPoints: 0,
       mood: 100,
       moraleBoost: 0,
       moraleBoostTimer: 0,
@@ -834,7 +833,9 @@ export class GameSimulation {
         lastUsedMs: 0,
         damageMultiplier: 1.8 + tier * 0.4,
         effectType: tier === 2 ? 'whirlwind' : 'slash',
-        description: 'Strikes viciously in a wide arc dealing heavy physical damage.'
+        description: 'Strikes viciously in a wide arc dealing heavy physical damage.',
+        exp: 0,
+        expToNext: 100
       };
     } else if (charClass === 'Ranger') {
       return {
@@ -846,7 +847,9 @@ export class GameSimulation {
         lastUsedMs: 0,
         damageMultiplier: 1.6 + tier * 0.35,
         effectType: 'multishot',
-        description: 'Fires rapid enchanted arrows piercing monster defenses.'
+        description: 'Fires rapid enchanted arrows piercing monster defenses.',
+        exp: 0,
+        expToNext: 100
       };
     } else if (charClass === 'Sorcerer') {
       return {
@@ -858,7 +861,9 @@ export class GameSimulation {
         lastUsedMs: 0,
         damageMultiplier: 2.2 + tier * 0.5,
         effectType: 'meteor',
-        description: 'Summons a blazing arcane meteor blasting all surrounding beasts.'
+        description: 'Summons a blazing arcane meteor blasting all surrounding beasts.',
+        exp: 0,
+        expToNext: 100
       };
     } else {
       return {
@@ -870,7 +875,9 @@ export class GameSimulation {
         lastUsedMs: 0,
         damageMultiplier: 1.7 + tier * 0.35,
         effectType: 'smite',
-        description: 'Calls down divine wrath that damages foes and shields the hunter.'
+        description: 'Calls down divine wrath that damages foes and shields the hunter.',
+        exp: 0,
+        expToNext: 100
       };
     }
   }
@@ -898,7 +905,6 @@ export class GameSimulation {
       h.tonicBoostTimer = 0;
       h.inventory = [];
       h.skills = [this.createClassSkill(h.charClass, 1)];
-      h.skillPoints = 0;
       h.killCount = 0;
       h.weapon = {
         id: `wpn-${h.charClass}`,
@@ -1449,7 +1455,7 @@ export class GameSimulation {
             // scoreNeeds) AND the zone is structurally walled (alive count
             // at target — not a transient repop dip, which refills in ~a
             // tick) AND the fallback is a progression dead end (nothing
-            // fair, or gray: diff ≥ 3 pays no spoils). Such walls reopen
+            // fair, or gray: diff ≥ gap pays no EXP). Such walls reopen
             // with a heal ~9 times in 10, so retreat to a real errand
             // instead of parking in the forest on gray prey. Healed hunters
             // re-enter through the town hub, which picks fair pref-zone
@@ -1654,7 +1660,7 @@ export class GameSimulation {
 
   /** True when the hunter could actually improve in town (gear or training). */
   private canImproveInTown(hunter: Hunter): boolean {
-    return this.canAffordForgeUpgrade(hunter) || hunter.skillPoints > 0;
+    return this.canAffordForgeUpgrade(hunter) || hunter.skills.some(s => s.level < s.maxLevel && s.exp >= s.expToNext);
   }
 
   private resolveHunterCombat(hunter: Hunter, monster: Monster, dt: number) {
@@ -1666,9 +1672,15 @@ export class GameSimulation {
     hunter.isAttacking = true;
     hunter.attackAnimTimer = 0.35;
 
-    // Check available skills for auto-cast
+    // Check available skills for auto-cast (round-robin: oldest ready first
+    // so 2nd/3rd skills actually get casts instead of skills[0] hogging).
     const now = Date.now();
-    const readySkill = hunter.skills.find(s => now - s.lastUsedMs >= s.cooldownMs);
+    let readySkill: Skill | null = null;
+    for (const s of hunter.skills) {
+      if (now - s.lastUsedMs >= s.cooldownMs && (!readySkill || s.lastUsedMs < readySkill.lastUsedMs)) {
+        readySkill = s;
+      }
+    }
 
     let isCrit = Math.random() < hunter.critRate;
     let damage = this.effectiveAtk(hunter) - (monster.def * 0.4);
@@ -1677,6 +1689,19 @@ export class GameSimulation {
       // Cast animated skill!
       readySkill.lastUsedMs = now;
       damage *= readySkill.damageMultiplier;
+
+      // Usage-based mastery: flat + CD bonus (longer CD = more EXP).
+      // Gray prey teaches nothing (matches 0 hunter EXP on gray).
+      const isGrayTarget = !monster.isBoss && (hunter.level - monster.level >= this.agentConfig.grayGap);
+      if (!isGrayTarget && readySkill.level < readySkill.maxLevel) {
+        const curExp = typeof readySkill.exp === 'number' && Number.isFinite(readySkill.exp) ? readySkill.exp : 0;
+        const need = typeof readySkill.expToNext === 'number' && Number.isFinite(readySkill.expToNext) ? readySkill.expToNext : 100;
+        const gain = 2 + readySkill.cooldownMs / 1000;
+        readySkill.exp = Math.min(need, curExp + gain);
+        if (readySkill.exp >= need) {
+          this.addFloatingText(`✨ ${readySkill.name} READY!`, hunter.gx, hunter.gy - 1.1, '#facc15', 11);
+        }
+      }
 
       // Spawn skill VFX animation
       this.skillVfxs.push({
@@ -1747,13 +1772,14 @@ export class GameSimulation {
       this.addLog('boss', `${hunter.name} defeated the Evil Lich Lord! The realm is temporarily purified.`, hunter.name);
     }
 
-    // Graduated spoils: overleveled hunters earn diminished rewards so they
-    // must hunt at grade. Bosses always pay full rewards regardless of gap.
+    // Graduated spoils: overleveled hunters earn no EXP but keep gold/drops
+    // so gray farming funds Academy promotions without leveling. Bosses always
+    // pay full rewards regardless of gap.
     // With gray gap G: diff <= G-3: full exp/drops/gold. diff == G-2: 50%
     // exp (rounded). diff == G-1: 25% exp (rounded). diff >= G (non-boss):
-    // NOTHING — no exp, drops, gold, or town tax. Kills still count and the
+    // NO EXP — 0 exp, full drops/gold + town tax. Kills still count and the
     // monster is still removed. (G=3 reproduces the classic curve exactly.)
-    // Gray/nothing rules apply FIRST to the totals; party sharing below
+    // Gray rules apply FIRST to the totals; party sharing below
     // only ever splits those computed totals.
     const levelDiff = hunter.level - monster.level;
     const G = this.agentConfig.grayGap;
@@ -1770,9 +1796,9 @@ export class GameSimulation {
       dropTotals = monster.drops;
     } else {
       expTotal = 0;
-      goldTotal = 0;
-      dropTotals = [];
-      this.addFloatingText('No spoils — prey too weak', hunter.gx, hunter.gy, '#6b7280', 11);
+      goldTotal = monster.goldReward;
+      dropTotals = monster.drops;
+      this.addFloatingText(`No EXP — prey too weak (+${goldTotal}g)`, hunter.gx, hunter.gy, '#6b7280', 11);
     }
 
     if (dropTotals.length > 0 || goldTotal > 0 || expTotal > 0) {
@@ -1859,23 +1885,10 @@ export class GameSimulation {
     }
     this.pathCache.delete(monster.id);
 
-    // Gray-kill correction: a no-spoils kill (non-boss, hunter 3+ levels
-    // above the dead prey) means the hunter is camping below grade. Retarget
-    // with an unpenalized lens restricted to the preferred zone: if fair
-    // pref-zone prey exists, walk straight there (even if claimed — sharing
-    // is allowed, killer takes rewards), with no town leg so there is no
-    // ping-pong risk. Otherwise leave targeting alone and fall through to
-    // the normal penalized routing (transit/gear-up/wander) on the next tick.
-    if (!monster.isBoss && hunter.level - monster.level >= this.agentConfig.grayGap) {
-      const pref = this.preferredZone(hunter.level);
-      const unpenalized = this.findBestMonsterForHunter(hunter, true);
-      if (unpenalized && unpenalized.zone === pref) {
-        hunter.targetMonsterId = unpenalized.id;
-        hunter.state = 'HUNTING';
-        hunter.targetGx = unpenalized.gx;
-        hunter.targetGy = unpenalized.gy;
-      }
-    }
+    // Gray kills now pay gold/drops (no EXP) to fund Academy promotions,
+    // so hunters are allowed to stay for gold farming. Uphill pull is handled
+    // by the soft transit utility (transitU=0.6 when fair pref-zone prey
+    // exists) instead of a forced retarget here.
   }
 
   // --------------------------------------------------------------------------
@@ -1888,7 +1901,6 @@ export class GameSimulation {
       hunter.exp -= hunter.expToNext;
       hunter.level++;
       hunter.expToNext = Math.round(hunter.expToNext * 1.45);
-      hunter.skillPoints++;
 
       // Stat boosts on level up
       hunter.maxHp += 20;
@@ -1898,7 +1910,7 @@ export class GameSimulation {
 
       soundFx.playLevelUp();
       this.addFloatingText(`⭐ LEVEL UP! [Lv.${hunter.level}]`, hunter.gx, hunter.gy - 0.8, '#facc15', 15);
-      this.addLog('combat', `${hunter.name} advanced to Level ${hunter.level}! Gained +1 Skill Point.`, hunter.name);
+      this.addLog('combat', `${hunter.name} advanced to Level ${hunter.level}!`, hunter.name);
 
       // Check if unlocked a new tier skill (every 3 levels)
       if (hunter.level % 3 === 0 && hunter.skills.length < 3) {
@@ -2097,7 +2109,7 @@ export class GameSimulation {
       tavern: moodU < tavernFrac ? (tavernFrac - moodU) / tavernFrac : 0,            // town: <tavernMood goes, lower = more urgent
       lab: (labOk || tonicOk) ? 0.2 + 0.6 * Math.max(elixirNeed / Math.max(1, this.elixirCapacity()), tonicNeed / Math.max(1, this.tonicCapacity())) : 0,
       forge: forgeOk ? 0.5 : 0,
-      academy: hunter.skillPoints > 0 ? Math.min(0.45, 0.35 + 0.05 * hunter.skillPoints) : 0,  // NEVER beats a healthy hunt alone
+      academy: hunter.skills.some(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : 100)) ? 0.45 : 0,  // NEVER beats a healthy hunt alone
       clinic: hpU < 0.7 ? (0.7 - hpU) / 0.7 : 0,
       transit: 0,   // filled by caller (field only)
       hunt: this.agentConfig.huntBaseline,    // baseline: needs must earn the interruption
@@ -2268,31 +2280,38 @@ export class GameSimulation {
         }
         case 'LEARNING_SKILL': {
           if (serviceBuilding.type !== 'TRAINING_ACADEMY') break;
-          // 3. Hero Auto Learns / Upgrades Skills (spends ALL banked points
-          // in one visit: field-deferred training batches into this trip,
-          // so one academy service always clears the backlog — no re-queue)
-          if (hunter.skillPoints > 0 && hunter.skills.length > 0) {
-            const skill = hunter.skills[0];
-            if (skill.level >= skill.maxLevel) {
-              // Already mastered: no upgrade and no store transaction.
-              // Banked points are cleared so the town hub doesn't loop
-              // straight back to the academy forever.
-              hunter.skillPoints = 0;
-              this.addFloatingText(`📜 ${skill.name} already mastered`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#a855f7', 13);
-              break;
-            }
-            const spent = hunter.skillPoints;
-            // Clamp to maxLevel so burst spending can't overshoot mastery.
-            const use = Math.min(spent, skill.maxLevel - skill.level);
-            skill.level += use;
-            skill.damageMultiplier += 0.3 * use;
-            hunter.skillPoints = 0;
+          // 3. Usage-based promotion: one READY skill (exp >= expToNext) gains
+          // +1 rank per visit for gold (checked at completion, no freebie).
+          // Lowest rank first so 2nd/3rd skills catch up instead of skills[0]
+          // hogging. More READY skills re-queue via town hub (forge pattern).
+          const ready = hunter.skills
+            .filter(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : 100))
+            .sort((a, b) => a.level - b.level);
+          if (ready.length === 0) break;
+          const skill = ready[0];
+          const cost = 40 + 25 * skill.level;
+          if (hunter.gold < cost) {
+            this.addFloatingText(`📜 Need ${cost}g for ${skill.name}`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#fca5a5', 12);
+            break;
+          }
+          hunter.gold -= cost;
+          skill.level += 1;
+          skill.damageMultiplier += 0.3;
+          skill.exp = 0;
 
-            soundFx.playLevelUp();
-            this.addFloatingText(`📜 Skill Upgraded: ${skill.name} (Lv.${skill.level})`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#a855f7', 13);
-            this.addLog('skill', `${hunter.name} mastered ${skill.name} Lv.${skill.level} at the Academy.`, hunter.name);
+          soundFx.playLevelUp();
+          this.addFloatingText(`📜 Skill Upgraded: ${skill.name} (Lv.${skill.level})`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#a855f7', 13);
+          this.addLog('skill', `${hunter.name} upgraded ${skill.name} to Lv.${skill.level} at the Academy for ${cost}g.`, hunter.name);
 
-            this.recordStoreTransaction(serviceBuilding, 25, 40);
+          this.recordStoreTransaction(serviceBuilding, 25, cost);
+
+          const moreReady = hunter.skills.some(s => s.level < s.maxLevel && s.exp >= s.expToNext && hunter.gold >= 40 + 25 * s.level);
+          if (moreReady) {
+            // Commission breather: another promotion is already affordable,
+            // so step out briefly and let the hub re-queue the next visit.
+            hunter.state = 'WANDERING_TOWN';
+            hunter.stateTimer = 2.5;
+            return;
           }
           break;
         }
@@ -3043,6 +3062,8 @@ export class GameSimulation {
         if (typeof h.tonicBoost !== 'number' || !Number.isFinite(h.tonicBoost)) h.tonicBoost = 0;
         if (typeof h.tonicBoostTimer !== 'number' || !Number.isFinite(h.tonicBoostTimer)) h.tonicBoostTimer = 0;
         if (typeof h.deaths !== 'number' || !Number.isFinite(h.deaths)) h.deaths = 0;
+        // Drop legacy generic skillPoints (now usage-based per-skill EXP).
+        if ('skillPoints' in (h as unknown as Record<string, unknown>)) delete (h as unknown as Record<string, unknown>).skillPoints;
         // Clamp pre-existing over-leveled skills (old bug let level exceed
         // maxLevel, e.g. Rank 7/5). Upgrade path is already capped; this
         // migrates old saves on load. Damage is recomputed from the clamped
@@ -3051,6 +3072,10 @@ export class GameSimulation {
         if (Array.isArray(h.skills)) {
           for (const skill of h.skills) {
             if (!skill || typeof skill !== 'object') continue;
+            // Migrate to usage-based EXP (fixed 100 to READY).
+            if (typeof skill.exp !== 'number' || !Number.isFinite(skill.exp)) skill.exp = 0;
+            if (typeof skill.expToNext !== 'number' || !Number.isFinite(skill.expToNext)) skill.expToNext = 100;
+            skill.exp = Math.max(0, Math.min(skill.expToNext, skill.exp));
             const max = (typeof skill.maxLevel === 'number' && Number.isFinite(skill.maxLevel))
               ? skill.maxLevel
               : 5;

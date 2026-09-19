@@ -49,6 +49,8 @@ export interface Skill {
   damageMultiplier: number;
   effectType: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst';
   description: string;
+  exp: number;
+  expToNext: number;
 }
 
 export interface Hunter {
@@ -90,9 +92,8 @@ export interface Hunter {
   inventory: ItemDrop[];
   maxInventorySlots: number;
 
-  // Skills
+  // Skills (usage-based EXP: cast to gain EXP, promote at Academy)
   skills: Skill[];
-  skillPoints: number;
 
   // Needs & morale (Hunters Town style)
   mood: number; // 0 - 100: drops when monsters land hits, scales ATK/DEF

@@ -300,24 +300,34 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
         {/* Skills List */}
         <div>
           <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-            <Zap className="w-3.5 h-3.5 text-yellow-400" /> Auto-Mastered Skills
+            <Zap className="w-3.5 h-3.5 text-yellow-400" /> Skills (Use to Master)
           </h3>
           <div className="space-y-1.5">
-            {hunter.skills.map((skill) => (
+            {hunter.skills.map((skill) => {
+              const cur = typeof skill.exp === 'number' ? skill.exp : 0;
+              const need = typeof skill.expToNext === 'number' ? skill.expToNext : 100;
+              const pct = Math.max(0, Math.min(100, (cur / Math.max(1, need)) * 100));
+              const ready = skill.level < skill.maxLevel && cur >= need;
+              return (
               <div key={skill.id} className="p-2 rounded-lg bg-slate-800/80 border border-slate-700/60">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-indigo-300">{skill.name}</span>
                   <span className="text-[10px] font-mono text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">
-                    Rank {skill.level} / {skill.maxLevel}
+                    Rank {skill.level} / {skill.maxLevel}{ready ? ' ✨READY' : ''}
                   </span>
                 </div>
                 <div className="text-[10px] text-slate-400 mt-1">{skill.description}</div>
+                <div className="mt-1.5 h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700/60">
+                  <div className={`h-full transition-all duration-200 ${ready ? 'bg-gradient-to-r from-amber-400 to-yellow-300' : 'bg-gradient-to-r from-indigo-500 to-purple-400'}`} style={{ width: `${pct}%` }} />
+                </div>
                 <div className="text-[9px] text-slate-500 font-mono mt-1 flex justify-between">
+                  <span>EXP {Math.floor(cur)}/{need}{ready ? ` · promote ${40 + 25 * skill.level}g` : ''}</span>
                   <span>Dmg: {Math.round(skill.damageMultiplier * 100)}%</span>
                   <span>CD: {skill.cooldownMs / 1000}s</span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
