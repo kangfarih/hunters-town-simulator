@@ -4,7 +4,7 @@ import {
   Package, Trophy, Eye, ArrowUpCircle, Compass 
 } from 'lucide-react';
 import { Hunter } from '../types';
-import { partyColor, epicEffectDescription } from '../game/simulation';
+import { partyColor, epicEffectDescription, SKILL_EXP_TO_NEXT } from '../game/simulation';
 
 interface HeroInspectorProps {
   hunter: Hunter;
@@ -301,7 +301,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
           <div className="space-y-1.5">
             {hunter.skills.map((skill) => {
               const cur = typeof skill.exp === 'number' ? skill.exp : 0;
-              const need = typeof skill.expToNext === 'number' ? skill.expToNext : 100;
+              const need = typeof skill.expToNext === 'number' ? skill.expToNext : SKILL_EXP_TO_NEXT;
               const pct = Math.max(0, Math.min(100, (cur / Math.max(1, need)) * 100));
               const ready = skill.level < skill.maxLevel && cur >= need;
               return (
