@@ -2052,7 +2052,27 @@ export class GameSimulation {
         this.addFloatingText(`🎵 Gold Fever!`, hunter.gx, hunter.gy - 1.1, '#fbbf24', 11);
       }
     } else {
-      // Standard attack
+      // Standard attack: melee classes lunge (no VFX), ranged classes fire
+      // a class-typed projectile so damage at range reads visually.
+      const rangedVfx: SkillVFX['type'] | null =
+        hunter.charClass === 'Ranger' ? 'multishot'
+        : hunter.charClass === 'Sorcerer' ? 'meteor'
+        : hunter.charClass === 'Bard' ? 'ballad'
+        : hunter.charClass === 'Cleric' ? 'smite'
+        : null;
+      if (rangedVfx) {
+        this.skillVfxs.push({
+          id: `vfx-atk-${Date.now()}-${Math.random()}`,
+          type: rangedVfx,
+          startX: hunter.gx,
+          startY: hunter.gy,
+          targetX: monster.gx,
+          targetY: monster.gy,
+          duration: 0.5,
+          elapsed: 0,
+          color: rangedVfx === 'meteor' ? '#ea580c' : rangedVfx === 'smite' ? '#facc15' : rangedVfx === 'ballad' ? '#2dd4bf' : '#38bdf8',
+        });
+      }
       if (hunter.charClass === 'Ranger') soundFx.playArrow();
       else if (hunter.charClass === 'Sorcerer') soundFx.playMagic();
       else if (hunter.charClass === 'Bard') soundFx.playLute();

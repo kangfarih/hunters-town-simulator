@@ -1248,16 +1248,16 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.fillStyle = '#fef08a';
     ctx.fillRect(center - 12, center - 2, 24, 4);
   } else if (type === 'multishot') {
-    // 3 Piercing Arrows
+    // Single piercing arrow (points up; renderer rotates to flight path).
+    // One arrow per sprite — Quick Shot's 3-shot volley comes from 3
+    // staggered VFX spawns, not 3 arrows baked into one texture.
     ctx.fillStyle = '#22c55e';
-    [-10, 0, 10].forEach(offset => {
-      ctx.fillRect(center + offset, center - 14, 2, 16);
-      ctx.beginPath();
-      ctx.moveTo(center + offset - 3, center - 14);
-      ctx.lineTo(center + offset + 1, center - 20);
-      ctx.lineTo(center + offset + 5, center - 14);
-      ctx.fill();
-    });
+    ctx.fillRect(center, center - 14, 2, 16);
+    ctx.beginPath();
+    ctx.moveTo(center - 3, center - 14);
+    ctx.lineTo(center + 1, center - 20);
+    ctx.lineTo(center + 5, center - 14);
+    ctx.fill();
   } else if (type === 'heal') {
     // Soft green-gold upward sparkle burst
     const grad = ctx.createRadialGradient(center, center + 6, 2, center, center + 6, 22);
