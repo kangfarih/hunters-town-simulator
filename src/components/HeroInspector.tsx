@@ -4,6 +4,7 @@ import {
   Package, Trophy, Eye, ArrowUpCircle, Compass 
 } from 'lucide-react';
 import { Hunter, HunterRarity } from '../types';
+import { partyColor } from '../game/simulation';
 
 interface HeroInspectorProps {
   hunter: Hunter;
@@ -107,6 +108,13 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
               </span>
             </div>
             <h2 className="text-sm font-bold text-white truncate mt-0.5" title={hunter.name}>
+              {hunter.partyId ? (
+                isPartyLeader ? (
+                  <span className="text-amber-400 mr-1" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="Party leader">♛</span>
+                ) : (
+                  <span className="mr-1" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="In party">👥</span>
+                )
+              ) : null}
               {hunter.name}
             </h2>
             <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5 font-mono">

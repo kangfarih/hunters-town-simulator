@@ -36,23 +36,38 @@ export function reserveAt(gx: number, gy: number): string | null {
 
 /** True if the integer cell holds a palisade wall segment. */
 export function isWallCell(cx: number, cy: number): boolean {
+  // Central interchange: cross-shaped plaza around the four-region corner
+  // (39,39) where the palisades meet. Vertical arm (cx==39, cy 37..41) and
+  // horizontal arm (cy==39, cx 37..41) stay walkable so hunters can cross
+  // between any regions without detouring through the outer gates.
+  if (isHubCell(cx, cy)) return false;
   // East wall of town (town | forest), gate at gy 29..31 (Town Gate road)
   if (cx === 39 && inRange(cy, 20, 38)) return !inRange(cy, 29, 31);
   // South wall of town (town | graveyard), gate at gx 29..31 (South Gate)
   if (cy === 39 && inRange(cx, 20, 38)) return !inRange(cx, 29, 31);
-  // Graveyard | volcano wall, gate at gy 47..49 (West Volcano Gate)
-  if (cx === 39 && inRange(cy, 39, 59)) return !inRange(cy, 47, 49);
-  // Forest | volcano wall, gate at gx 47..49 (North Volcano Gate)
-  if (cy === 39 && inRange(cx, 39, 59)) return !inRange(cx, 47, 49);
+  // Graveyard | volcano wall: solid, no gate. Volcano is reachable only
+  // via the central hub plaza arms.
+  if (cx === 39 && inRange(cy, 39, 59)) return true;
+  // Forest | volcano wall: solid, no gate. Volcano is reachable only
+  // via the central hub plaza arms.
+  if (cy === 39 && inRange(cx, 39, 59)) return true;
   return false;
+}
+
+/** Four-region corner where the palisades meet (town is gx<=39 && gy<=39). */
+export const HUB_X = 39;
+export const HUB_Y = 39;
+
+/** True if the integer cell is part of the central interchange plaza. */
+export function isHubCell(cx: number, cy: number): boolean {
+  return (cx === HUB_X && inRange(cy, HUB_Y - 2, HUB_Y + 2)) ||
+    (cy === HUB_Y && inRange(cx, HUB_X - 2, HUB_X + 2));
 }
 
 /** Gate (opening) cells — walkable breaches in the walls. */
 export const GATE_CELLS: PathPoint[] = [
   { x: 39, y: 29 }, { x: 39, y: 30 }, { x: 39, y: 31 },
   { x: 29, y: 39 }, { x: 30, y: 39 }, { x: 31, y: 39 },
-  { x: 39, y: 47 }, { x: 39, y: 48 }, { x: 39, y: 49 },
-  { x: 47, y: 39 }, { x: 48, y: 39 }, { x: 49, y: 39 },
 ];
 
 /** All wall cells (for rendering the palisades). Computed once. */

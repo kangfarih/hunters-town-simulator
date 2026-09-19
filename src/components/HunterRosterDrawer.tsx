@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, ChevronUp, ChevronDown } from 'lucide-react';
 import { Hunter } from '../types';
+import { partyColor } from '../game/simulation';
 
 interface HunterRosterDrawerProps {
   hunters: Hunter[];
@@ -110,6 +111,11 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1">
                       <span className="text-xs font-bold text-slate-200 truncate" title={hunter.name}>
+                        {partyLeaderIds?.has(hunter.id) ? (
+                          <span className="text-amber-400 mr-0.5" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="Party leader">♛ </span>
+                        ) : hunter.partyId ? (
+                          <span className="mr-0.5" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="In party">👥 </span>
+                        ) : null}
                         {hunter.name.split(' ')[0]}
                       </span>
                       <span className="text-[10px] font-bold text-amber-300 font-mono shrink-0">
@@ -123,11 +129,6 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                       <span className={`text-[10px] font-medium truncate ${action.color}`}>
                         {action.text}
                       </span>
-                      {hunter.partyId && (
-                        <span className="text-[10px] font-medium text-indigo-300 shrink-0" title={partyLeaderIds?.has(hunter.id) ? 'Party leader' : 'In a field party'}>
-                          👥{partyLeaderIds?.has(hunter.id) ? ' ♛' : ''}
-                        </span>
-                      )}
                     </div>
                   </div>
                 </div>

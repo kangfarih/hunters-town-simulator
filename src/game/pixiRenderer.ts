@@ -1,11 +1,11 @@
 import { 
   Application, Container, Sprite, Graphics, Text, TextStyle, Texture 
 } from 'pixi.js';
-import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel } from './simulation';
+import { GameSimulation, SUMMON_PORTAL_POS, monsterLabel, partyColor } from './simulation';
 import { 
   gridToScreen, screenToGrid, MAP_GRID_WIDTH, MAP_GRID_HEIGHT 
 } from './isometric';
-import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS, WALL_CELLS } from './pathfinding';
+import { tavernSeatPositions, clinicBedPositions, forgeStationPositions, cauldronStationPositions, academyStationPositions, reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from './pathfinding';
 import { 
   createIsoTileTexture, createHunterFrame, createMonsterFrame, 
   createBuildingTexture, createSkillVfxTexture,
@@ -211,9 +211,14 @@ export class PixiRenderer {
       for (let gy = 0; gy < MAP_GRID_HEIGHT; gy++) {
         let tileType: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark' = 'forest_grass';
 
+        // Central interchange plaza: stone hub where the palisades meet.
+        // Special-cased before region mapping; all other mapping unchanged.
+        if (isHubCell(gx, gy)) {
+          tileType = 'stone_road';
+        }
         // Reserved expansion land (freed northwest bands): dark placeholder,
         // skipping all existing region logic below.
-        if (reserveAt(gx, gy) !== null) {
+        else if (reserveAt(gx, gy) !== null) {
           tileType = 'reserve_dark';
         }
         // Town Area: 20..38, 20..38
@@ -763,6 +768,8 @@ export class PixiRenderer {
 
   private renderHunters() {
     const activeHunterIds = new Set(this.simulation.hunters.map(h => h.id));
+    // Leader ids derived once per frame from runtime parties (not per hunter).
+    const leaderIds = new Set([...this.simulation.parties.values()].map(p => p.leaderId));
 
     // Cleanup dead/removed hunter sprites
     for (const [id, data] of this.hunterSprites.entries()) {
@@ -869,8 +876,10 @@ export class PixiRenderer {
       hData.hpBar.rect(screenPos.x - barW / 2, screenPos.y - 42, barW * hpRatio, barH).fill({ color: hpColor });
       hData.hpBar.zIndex = hData.sprite.zIndex + 5;
 
-      // Name & Level
-      hData.nameText.text = `Lv.${hunter.level} ${hunter.name.split(' ')[0]}`;
+      // Name & Level (party icon prefix beside the name; boss/monster labels untouched)
+      const partyIcon = leaderIds.has(hunter.id) ? '♛ ' : hunter.partyId ? '👥 ' : '';
+      hData.nameText.text = `${partyIcon}Lv.${hunter.level} ${hunter.name.split(' ')[0]}`;
+      hData.nameText.style.fill = partyColor(hunter.partyId) ?? this.getRarityColor(hunter.rarity);
       hData.nameText.x = screenPos.x;
       hData.nameText.y = screenPos.y - 44;
       hData.nameText.zIndex = hData.sprite.zIndex + 6;

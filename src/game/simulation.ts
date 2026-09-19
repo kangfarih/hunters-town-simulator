@@ -211,6 +211,32 @@ export interface Party {
   lootTurn: number;
 }
 
+/**
+ * Deterministic per-party badge color: all members of the same party share
+ * one color. Pure (no state): null in → null out, else a stable hash of the
+ * party id into an 8-color palette of saturated mid-brights readable on dark
+ * slate and in the Pixi canvas text. Never persisted.
+ */
+const PARTY_COLOR_PALETTE = [
+  '#f472b6', // pink
+  '#60a5fa', // blue
+  '#4ade80', // green
+  '#facc15', // yellow
+  '#c084fc', // purple
+  '#fb923c', // orange
+  '#2dd4bf', // teal
+  '#f87171', // red
+] as const;
+
+export function partyColor(partyId: string | null): string | null {
+  if (partyId == null) return null;
+  let hash = 5381;
+  for (let i = 0; i < partyId.length; i++) {
+    hash = ((hash << 5) + hash + partyId.charCodeAt(i)) | 0;
+  }
+  return PARTY_COLOR_PALETTE[Math.abs(hash) % PARTY_COLOR_PALETTE.length];
+}
+
 /** Clamp a (possibly foreign) agent-config blob into valid ranges. */
 export function clampAgentConfig(cfg: Partial<AgentConfig>): AgentConfig {
   const num = (v: unknown, fallback: number) =>
