@@ -68,20 +68,24 @@ export class EffectsLayer {
       g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
 
       if (z.kind === 'burn') {
-        // Strict-square ember core: deterministic dithered cluster that
-        // flickers at 12fps steps. No ellipses/gradients.
+        // Strict-square ember ground: small 2px squares scattered EVENLY
+        // across the whole ellipse (not a center cluster). Deterministic
+        // golden-ratio spread + 12fps flicker. No ellipses/gradients.
         const flick = Math.floor(z.elapsed * 12) % 2 === 0 ? 1 : 0.72;
         const coreColors = ['#ffffff', '#fef08a', '#facc15', '#fb923c', '#ea580c'];
-        const spreadX = Math.max(8, rx * 0.45);
-        for (let i = 0; i < 12; i++) {
-          // Deterministic pseudo-random offsets (stable per frame index).
-          const hx = Math.sin(i * 12.9898 + Math.floor(z.elapsed * 12) * 0.7) * 0.5;
-          const hy = Math.cos(i * 78.233 + Math.floor(z.elapsed * 12) * 0.5) * 0.35;
-          const sx = p.x + hx * spreadX;
-          const sy = cy - 2 + hy * spreadX * 0.5 - (i % 3) * 2;
-          const s = i % 4 === 0 ? 4 : i % 2 === 0 ? 3 : 2;
-          g.rect(Math.round(sx), Math.round(sy), s, s).fill({
-            color: coreColors[i % coreColors.length],
+        const EMBER_N = 18;
+        for (let i = 0; i < EMBER_N; i++) {
+          // Even coverage: golden-ratio lattice across the disc.
+          const u = ((i * 0.61803398875 + 0.13) % 1 + 1) % 1;
+          const v = ((i * 0.38196601125 + 0.29) % 1 + 1) % 1;
+          const ex = (u * 2 - 1) * rx * 0.8;
+          const ey = (v * 2 - 1) * ry * 0.8;
+          const sx = p.x + ex;
+          // Slight 12fps shimmer so squares twinkle without moving.
+          const shimmer = Math.sin(i * 12.9898 + Math.floor(z.elapsed * 12) * 0.9) > 0 ? 0 : 1;
+          const sy = cy - 2 + ey - shimmer;
+          g.rect(Math.round(sx), Math.round(sy), 2, 2).fill({
+            color: coreColors[(i + Math.floor(z.elapsed * 12)) % coreColors.length],
             alpha: 0.9 * flick * fade,
           });
         }
@@ -296,21 +300,42 @@ export class EffectsLayer {
       const bx = p.x;
       const by = p.y + 8;
       if (z.kind === 'burn') {
+        // Burn flames: small 2px squares scattered EVENLY over the whole
+        // ellipse (uniform disc pick per spawn), not a center pile.
+        // rx/ry match the ground disc above (r*32 / r*16).
+        const rxPx = z.radius * 32;
+        const ryPx = z.radius * 16;
+        const pickInDisc = () => {
+          const a = Math.random() * Math.PI * 2;
+          const r = Math.sqrt(Math.random()) * 0.8; // uniform area fill
+          return {
+            x: bx + Math.cos(a) * r * rxPx,
+            y: by + Math.sin(a) * r * ryPx,
+          };
+        };
         const scale = Math.min(1.6, 0.7 + z.radius * 0.35);
         if (!this.seenBursts.has(`zone-${z.id}`)) {
           this.seenBursts.add(`zone-${z.id}`);
-          this.particles.spawnEmberBurst(bx, by, 8, 70 * scale);
+          // Ignition pops spread across the area, not one center burst.
+          for (let k = 0; k < 5; k++) {
+            const s = pickInDisc();
+            this.particles.spawnEmberBurst(s.x, s.y, 3, 60 * scale);
+          }
         }
         const fa = (this.fireAcc.get(z.id) ?? 0) + dt * 30 * scale * (0.35 + 0.65 * fade);
         const fn = Math.floor(fa);
         this.fireAcc.set(z.id, fa - fn);
         for (let i = 0; i < fn; i++) {
-          this.particles.spawnFire(bx, by, { n: 1, spread: 6 * scale, up: 40, life: 0.7 });
+          const s = pickInDisc();
+          this.particles.spawnFire(s.x, s.y, { n: 1, spread: 2, up: 38, life: 0.65, size: 2 });
         }
         const sa = (this.smokeAcc.get(z.id) ?? 0) + dt * 7 * fade;
         const sn = Math.floor(sa);
         this.smokeAcc.set(z.id, sa - sn);
-        if (sn > 0) this.particles.spawnSmoke(bx, by - 2, sn, 7 * scale);
+        for (let i = 0; i < sn; i++) {
+          const s = pickInDisc();
+          this.particles.spawnSmoke(s.x, s.y - 2, 1, 3);
+        }
         continue;
       }
       // --- Non-fire zones: rate-limited spark emitters, random offsets. ---
