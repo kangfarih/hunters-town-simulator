@@ -1,4 +1,4 @@
-export type CharacterClass = 'Berserker' | 'Ranger' | 'Sorcerer' | 'Paladin';
+export type CharacterClass = 'Berserker' | 'Ranger' | 'Sorcerer' | 'Paladin' | 'Cleric';
 
 export type HunterRarity = 'Normal' | 'Rare' | 'Superior' | 'Heroic' | 'Legendary';
 
@@ -6,6 +6,7 @@ export type HunterState =
   | 'SPAWNING'
   | 'REGISTERING'
   | 'WANDERING_TOWN'
+  | 'LOOKING_FOR_PARTY'
   | 'TRAVELING_TO_HUNT'
   | 'HUNTING'
   | 'FIGHTING'
@@ -47,7 +48,7 @@ export interface Skill {
   cooldownMs: number;
   lastUsedMs: number;
   damageMultiplier: number;
-  effectType: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst';
+  effectType: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal';
   description: string;
   exp: number;
   expToNext: number;
@@ -85,6 +86,10 @@ export interface Hunter {
   // Field party (runtime-only; dissolved on save/load, reforms live)
   partyId: string | null;
 
+  // Plaza LFP muster cooldown (sim-seconds): set to 90 after a 12s LFP
+  // wait times out with no match, gating re-queue. Defaults 0.
+  lfpCooldown: number;
+
   // Equipment & Inventory
   weapon: Equipment;
   armor: Equipment;
@@ -117,7 +122,7 @@ export interface Monster {
   id: string;
   name: string;
   zone: 1 | 2 | 3;
-  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'drake' | 'boss_lich';
+  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_lich';
   level: number;
   hp: number;
   maxHp: number;
@@ -194,7 +199,7 @@ export interface FloatingText {
 
 export interface SkillVFX {
   id: string;
-  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'impact' | 'levelup';
+  type: 'slash' | 'multishot' | 'meteor' | 'smite' | 'whirlwind' | 'holy_burst' | 'heal' | 'impact' | 'levelup';
   startX: number;
   startY: number;
   targetX: number;

@@ -214,6 +214,11 @@ export function createHunterFrame(
     mainColor = '#e2e8f0';
     trimColor = '#eab308';
     capeColor = '#0284c7';
+  } else {
+    // Cleric: white-gold robe (distinct from Paladin's silver-blue)
+    mainColor = '#f8fafc';
+    trimColor = '#d4a017';
+    capeColor = '#a16207';
   }
 
   // 3. Cape (behind body)
@@ -274,6 +279,14 @@ export function createHunterFrame(
     ctx.fillRect(cx - 2, baseY - 28, 4, 4);
     ctx.fillStyle = '#facc15';
     ctx.fillRect(cx - 1, baseY - 29, 2, 2); // star
+  } else if (charClass === 'Cleric') {
+    // White-gold hood with gold trim
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(cx - 5, baseY - 21, 10, 4);
+    ctx.fillRect(cx - 6, baseY - 18, 2, 6);
+    ctx.fillRect(cx + 4, baseY - 18, 2, 6);
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(cx - 5, baseY - 18, 10, 1);
   } else {
     // Paladin winged crest
     ctx.fillStyle = '#f1f5f9';
@@ -321,6 +334,16 @@ export function createHunterFrame(
     ctx.fill();
     ctx.fillStyle = '#cffafe';
     ctx.fillRect(3, -19, 2, 2);
+  } else if (charClass === 'Cleric') {
+    // Small chime staff with a green-gold healing crystal
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(3, -12, 2, 20);
+    ctx.fillStyle = '#4ade80';
+    ctx.beginPath();
+    ctx.arc(4, -14, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f0fdf4';
+    ctx.fillRect(3, -15, 2, 2);
   } else {
     // Paladin: Shield on left, Warhammer on right
     ctx.fillStyle = '#94a3b8';
@@ -427,6 +450,26 @@ export function createMonsterFrame(type: string, frame: number): Texture {
     ctx.fillStyle = '#e2e8f0';
     ctx.fillRect(cx - 3, cy + 2, 2, 8);
     ctx.fillRect(cx + 1, cy + 2, 2, 8);
+  } else if (type === 'wight') {
+    // Grave Wight: tall pale spectral figure in a tattered dark cloak
+    ctx.fillStyle = '#1e1b4b'; // tattered dark cloak
+    ctx.fillRect(cx - 7, cy - 16, 14, 22);
+    // Cloak tatters
+    ctx.fillRect(cx - 9, cy + 2, 3, 4);
+    ctx.fillRect(cx + 6, cy + 2, 3, 5);
+    ctx.fillRect(cx - 2, cy + 4, 3, 4);
+    // Pale spectral face & hands
+    ctx.fillStyle = '#e0e7ff';
+    ctx.fillRect(cx - 4, cy - 20, 8, 7); // gaunt face
+    ctx.fillRect(cx - 9, cy - 6, 3, 6); // left hand
+    ctx.fillRect(cx + 6, cy - 6, 3, 6); // right hand
+    // Glowing cyan eyes
+    ctx.fillStyle = '#06b6d4';
+    ctx.fillRect(cx - 2, cy - 17, 2, 2);
+    ctx.fillRect(cx + 2, cy - 17, 2, 2);
+    // Spectral wisp trail
+    ctx.fillStyle = '#818cf8';
+    ctx.fillRect(cx - 1, cy + 6 + squish, 2, 3);
   } else if (type === 'drake') {
     // Fire Drake mini-dragon
     ctx.fillStyle = '#c2410c';
@@ -445,6 +488,31 @@ export function createMonsterFrame(type: string, frame: number): Texture {
     // Fire breath ember
     ctx.fillStyle = '#fde047';
     ctx.fillRect(cx + 14, cy - 11, 3, 3);
+  } else if (type === 'golem') {
+    // Magma Golem: bulky basalt brute with lava cracks
+    ctx.fillStyle = '#292524'; // basalt torso
+    ctx.fillRect(cx - 9, cy - 10, 18, 14);
+    ctx.fillRect(cx - 7, cy - 20, 14, 10); // heavy head/brow block
+    // Heavy brow ridge
+    ctx.fillStyle = '#44403c';
+    ctx.fillRect(cx - 7, cy - 16, 14, 3);
+    // Glowing lava cracks
+    ctx.fillStyle = '#ea580c';
+    ctx.fillRect(cx - 5, cy - 6, 4, 2);
+    ctx.fillRect(cx + 2, cy - 2, 5, 2);
+    ctx.fillRect(cx - 1, cy - 12, 2, 5);
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(cx - 4, cy - 6, 2, 1);
+    // Ember eyes under the brow
+    ctx.fillStyle = '#f97316';
+    ctx.fillRect(cx - 3, cy - 13, 2, 2);
+    ctx.fillRect(cx + 3, cy - 13, 2, 2);
+    // Heavy basalt arms & legs
+    ctx.fillStyle = '#1c1917';
+    ctx.fillRect(cx - 13, cy - 8, 4, 10);
+    ctx.fillRect(cx + 9, cy - 8, 4, 10);
+    ctx.fillRect(cx - 7, cy + 4, 4, 6);
+    ctx.fillRect(cx + 3, cy + 4, 4, 6);
   } else {
     // Boss Evil Lich Lord
     ctx.fillStyle = '#312e81'; // Dark void robe
@@ -1158,6 +1226,26 @@ export function createSkillVfxTexture(type: string): Texture {
       ctx.lineTo(center + offset + 5, center - 14);
       ctx.fill();
     });
+  } else if (type === 'heal') {
+    // Soft green-gold upward sparkle burst
+    const grad = ctx.createRadialGradient(center, center + 6, 2, center, center + 6, 22);
+    grad.addColorStop(0, 'rgba(248, 250, 252, 0.95)');
+    grad.addColorStop(0.4, 'rgba(74, 222, 128, 0.7)');
+    grad.addColorStop(1, 'rgba(212, 160, 23, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(center, center + 6, 22, 0, Math.PI * 2);
+    ctx.fill();
+    // Rising sparkles (lower = larger, fading upward)
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(center - 8, center + 10, 4, 4);
+    ctx.fillRect(center + 5, center + 4, 3, 3);
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(center - 3, center - 2, 3, 3);
+    ctx.fillRect(center - 11, center - 6, 2, 2);
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(center + 2, center - 12, 2, 2);
+    ctx.fillRect(center - 1, center - 18, 2, 2);
   } else if (type === 'levelup') {
     // Level-up burst: gold pillar + expanding ring + rising sparks
     ctx.fillStyle = 'rgba(250, 204, 21, 0.85)';

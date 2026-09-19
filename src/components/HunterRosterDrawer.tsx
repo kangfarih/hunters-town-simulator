@@ -32,6 +32,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
     switch (state) {
       case 'FIGHTING': return { text: '⚔️ Slaying', color: 'text-red-400' };
       case 'HUNTING': return { text: '🌲 Hunting', color: 'text-emerald-400' };
+      case 'LOOKING_FOR_PARTY': return { text: '🔍 Seeking Party', color: 'text-cyan-300' };
       case 'SELLING_LOOT': return { text: '💰 Selling', color: 'text-yellow-400' };
       case 'UPGRADING_GEAR': return { text: '🔨 Forging', color: 'text-blue-400' };
       case 'LEARNING_SKILL': return { text: '📜 Training', color: 'text-purple-400' };
@@ -60,7 +61,7 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
   })();
 
   return (
-    <div className="absolute left-3 top-20 bottom-3 z-20 pointer-events-auto font-sans w-60 max-w-[calc(100vw-24px)] flex flex-col">
+    <div className="absolute left-3 top-20 bottom-3 z-20 pointer-events-auto font-sans w-64 max-w-[calc(100vw-24px)] flex flex-col">
       {/* Drawer Toggle Pill */}
       <button
         onClick={() => setIsOpen(!isOpen)}
@@ -105,13 +106,15 @@ export const HunterRosterDrawer: React.FC<HunterRosterDrawerProps> = ({
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-lg leading-none">
-                    {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : '🛡️'}
+                  <span className="text-lg leading-none text-white">
+                    {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : '⚕️'}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1">
                       <span className="text-xs font-bold text-slate-200 truncate" title={hunter.name}>
-                        {partyLeaderIds?.has(hunter.id) ? (
+                        {hunter.state === 'LOOKING_FOR_PARTY' ? (
+                          <span className="mr-0.5" title="Looking for party">🔍 </span>
+                        ) : partyLeaderIds?.has(hunter.id) ? (
                           <span className="text-amber-400 mr-0.5" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="Party leader">♛ </span>
                         ) : hunter.partyId ? (
                           <span className="mr-0.5" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="In party">👥 </span>

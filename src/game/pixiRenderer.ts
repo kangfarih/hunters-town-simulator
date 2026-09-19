@@ -179,7 +179,7 @@ export class PixiRenderer {
     });
 
     // Pre-cache VFX textures
-    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'impact', 'levelup'].forEach(v => {
+    ['slash', 'meteor', 'whirlwind', 'smite', 'multishot', 'heal', 'impact', 'levelup'].forEach(v => {
       this.vfxTextures.set(v, createSkillVfxTexture(v));
     });
   }
@@ -799,7 +799,7 @@ export class PixiRenderer {
       // Determine action for frame lookup
       let action: 'idle' | 'walk' | 'attack' | 'cast' = 'idle';
       if (!spot && hunter.isAttacking) {
-        action = hunter.charClass === 'Sorcerer' ? 'cast' : 'attack';
+        action = (hunter.charClass === 'Sorcerer' || hunter.charClass === 'Cleric') ? 'cast' : 'attack';
       } else if (!spot && (hunter.state === 'HUNTING' || hunter.state === 'TRAVELING_TO_HUNT' || hunter.state === 'RETURNING_TO_TOWN' || hunter.state === 'SPAWNING' || hunter.state === 'REGISTERING')) {
         action = 'walk';
       }
@@ -876,8 +876,11 @@ export class PixiRenderer {
       hData.hpBar.rect(screenPos.x - barW / 2, screenPos.y - 42, barW * hpRatio, barH).fill({ color: hpColor });
       hData.hpBar.zIndex = hData.sprite.zIndex + 5;
 
-      // Name & Level (party icon prefix beside the name; boss/monster labels untouched)
-      const partyIcon = leaderIds.has(hunter.id) ? '♛ ' : hunter.partyId ? '👥 ' : '';
+      // Name & Level (party icon prefix beside the name; LFP 🔍 takes
+      // precedence while seeking; boss/monster labels untouched)
+      // LFP seekers render the idle frame: LOOKING_FOR_PARTY is deliberately
+      // absent from the walk-action condition above — they wait at the plaza.
+      const partyIcon = hunter.state === 'LOOKING_FOR_PARTY' ? '🔍 ' : leaderIds.has(hunter.id) ? '♛ ' : hunter.partyId ? '👥 ' : '';
       hData.nameText.text = `${partyIcon}Lv.${hunter.level} ${hunter.name.split(' ')[0]}`;
       hData.nameText.style.fill = partyColor(hunter.partyId) ?? this.getRarityColor(hunter.rarity);
       hData.nameText.x = screenPos.x;
@@ -1000,7 +1003,7 @@ export class PixiRenderer {
 
       // Per-effect pacing: arrows/slashes snap fast, pillars linger
       const pacing: Record<string, number> = {
-        multishot: 0.65, slash: 0.7, impact: 0.8,
+        multishot: 0.65, slash: 0.7, impact: 0.8, heal: 1.0,
         meteor: 1.0, whirlwind: 1.0, smite: 1.15, levelup: 1.2,
       };
       const visualDuration = vfx.duration * (pacing[vfx.type] ?? 1.0);
@@ -1046,6 +1049,12 @@ export class PixiRenderer {
         sprite.y = startScreen.y + dy * t - 8;
         sprite.rotation = flightAngle;
         sprite.scale.set(0.9 + pop * 0.5);
+      } else if (vfx.type === 'heal') {
+        // Healing bloom erupts on the target and drifts upward, no travel
+        sprite.x = targetScreen.x;
+        sprite.y = targetScreen.y - 14 - progress * 10;
+        const s = 0.6 + pop * 0.8;
+        sprite.scale.set(s);
       } else if (vfx.type === 'levelup') {
         // Level-up pillar erupts from the hunter and rises, ring expanding
         sprite.x = startScreen.x;

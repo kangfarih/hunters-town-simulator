@@ -70,6 +70,17 @@ class AudioSynth {
     this.playTone(300, 900, 0.18, 'sine', 0.15);
   }
 
+  // 5b. Cleric Heal: two soft sine tones rising, quiet like playCoin
+  public playHeal() {
+    if (this.isMuted) return;
+    const notes = [659.25, 987.77];
+    notes.forEach((freq, idx) => {
+      setTimeout(() => {
+        this.playTone(freq, freq * 1.02, 0.15, 'sine', 0.15);
+      }, idx * 90);
+    });
+  }
+
   // 5. Holy Smite
   public playSmite() {
     if (this.isMuted) return;

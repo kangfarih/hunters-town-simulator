@@ -62,6 +62,8 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
         return { label: '📋 Registering at Sanctuary Hall', color: 'text-amber-400 bg-amber-950/60 border-amber-500/40' };
       case 'BREWING_ELIXIR':
         return { label: '🧪 Brewing Elixirs at Cauldron', color: 'text-emerald-400 bg-emerald-950/60 border-emerald-500/40 animate-pulse' };
+      case 'LOOKING_FOR_PARTY':
+        return { label: '🔍 Looking for Party', color: 'text-cyan-300 bg-cyan-950/60 border-cyan-500/40 animate-pulse' };
       default:
         return { label: '✨ Sanctuary Stroll', color: 'text-slate-400 bg-slate-900 border-slate-700' };
     }
@@ -91,7 +93,7 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
           {/* Class Avatar & Rarity Frame */}
           <div className={`w-14 h-14 rounded-xl border-2 ${rarityStyle.border} ${rarityStyle.bg} shadow-lg ${rarityStyle.glow} flex flex-col items-center justify-center p-1 relative`}>
             <span className="text-xl">
-              {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : '🛡️'}
+              {hunter.charClass === 'Berserker' ? '⚔️' : hunter.charClass === 'Ranger' ? '🏹' : hunter.charClass === 'Sorcerer' ? '🔮' : hunter.charClass === 'Paladin' ? '🛡️' : '⚕️'}
             </span>
             <span className="text-[9px] font-black tracking-wider uppercase text-amber-300 font-mono">
               {hunter.charClass}
@@ -108,7 +110,9 @@ export const HeroInspector: React.FC<HeroInspectorProps> = ({
               </span>
             </div>
             <h2 className="text-sm font-bold text-white truncate mt-0.5" title={hunter.name}>
-              {hunter.partyId ? (
+              {hunter.state === 'LOOKING_FOR_PARTY' ? (
+                <span className="mr-1" title="Looking for party">🔍</span>
+              ) : hunter.partyId ? (
                 isPartyLeader ? (
                   <span className="text-amber-400 mr-1" style={{ color: partyColor(hunter.partyId) ?? undefined }} title="Party leader">♛</span>
                 ) : (

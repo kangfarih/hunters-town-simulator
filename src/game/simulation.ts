@@ -332,6 +332,13 @@ export function baseStatsFor(charClass: CharacterClass, rarity: HunterRarity): {
     baseDef = 16;
     baseCrit = 0.08;
     speed = 0.038;
+  } else {
+    // Cleric: frail support healer, slightly quick feet
+    baseHp = 85;
+    baseAtk = 14;
+    baseDef = 8;
+    baseCrit = 0.10;
+    speed = 0.044;
   }
 
   return {
@@ -340,7 +347,7 @@ export function baseStatsFor(charClass: CharacterClass, rarity: HunterRarity): {
     def: Math.round(baseDef * mult),
     critRate: baseCrit,
     speed,
-    weaponName: `Trainee ${charClass === 'Berserker' ? 'Broadsword' : charClass === 'Ranger' ? 'Shortbow' : charClass === 'Sorcerer' ? 'Wooden Staff' : 'Mace'}`,
+    weaponName: `Trainee ${charClass === 'Berserker' ? 'Broadsword' : charClass === 'Ranger' ? 'Shortbow' : charClass === 'Sorcerer' ? 'Wooden Staff' : charClass === 'Paladin' ? 'Mace' : 'Chime'}`,
     armorName: 'Novice Leather Coat',
     accessoryName: 'Copper Ring',
   };
@@ -642,21 +649,61 @@ export class GameSimulation {
   }
 
   /**
-   * Periodic matching pass: motivated solo seekers (crowded or ambitious,
-   * in HUNTING/FIGHTING) join compatible existing parties (<5, same zone,
-   * leader level ±3) or form new greedy groups (sorted by level, filled to
-   * 5, all within ±3). Leader is the highest level. Logs formations only.
+   * Plaza LFP muster + matching pass. Motivated solo seekers (crowded or
+   * ambitious, in HUNTING/FIGHTING, cooldown expired, not already at the
+   * plaza) are rerouted to the town plaza to wait as LOOKING_FOR_PARTY
+   * (12s budget). The matching pass then groups plaza seekers by
+   * preferredZone + level ±3 — filling existing parties <5 first, then
+   * forming new greedy groups to 5 — and every matched hunter leaves for
+   * the hunt immediately. Logs formations only.
    */
   public runPartyFormation() {
+    if (!this.agentConfig.partiesEnabled) return;
+    // 0. Reroute motivated solo field hunters to the plaza muster.
+    // Motivation is snapshotted for all seekers BEFORE rerouting, so the
+    // first departure can't un-crowd the zone for the rest of the pack.
     const seekers = this.hunters.filter(h =>
       h.partyId == null && (h.state === 'HUNTING' || h.state === 'FIGHTING'));
-    if (seekers.length === 0) return;
-    const motivated = seekers.filter(h => this.isCrowdedFor(h) || this.isAmbitiousFor(h));
-    if (motivated.length === 0) return;
-    const unplaced = new Set(motivated.map(h => h.id));
-    const byId = new Map(motivated.map(h => [h.id, h]));
+    const motivated = seekers.filter(h => (h.lfpCooldown ?? 0) <= 0 && (this.isCrowdedFor(h) || this.isAmbitiousFor(h)));
+    for (const s of motivated) {
+      if (gridDistance(s.gx, s.gy, 29, 29) < 1.5) continue; // already at plaza
+      s.state = 'LOOKING_FOR_PARTY';
+      s.targetMonsterId = null;
+      s.targetBuildingId = null;
+      s.targetGx = 29;
+      s.targetGy = 29;
+      s.stateTimer = 12; // LFP wait budget (sim-seconds)
+      this.addFloatingText('🔍 Seeking party!', s.gx, s.gy, '#67e8f9', 11);
+    }
+    this.matchLfpSeekers();
+  }
 
-    // 1. Fill existing parties first (same zone, leader level ±3, cap 5).
+  /**
+   * Match plaza LFP seekers into parties. Only seekers who have ARRIVED at
+   * the muster (within 3 of the plaza) are matchable, so compatible seekers
+   * visibly wait at the plaza (🔍) before forming; loners wait out their 12s
+   * budget and march out solo. Existing parties <5 with a compatible leader
+   * (same preferredZone, leader level ±3) are filled first; leftovers form
+   * new greedy level-sorted groups (within ±3, to 5) per preferredZone.
+   * Every matched hunter leaves for the hunt at once so no one idles at the
+   * plaza after matching.
+   */
+  private matchLfpSeekers() {
+    // Candidates: arrived plaza LFP waiters plus motivated solo field
+    // hunters already standing at the plaza (routing skips them, but they
+    // are physically at the muster and must never stick unmatched).
+    const atPlaza = (h: Hunter) => gridDistance(h.gx, h.gy, 29, 29) <= 3;
+    const lfp = this.hunters.filter(h => h.state === 'LOOKING_FOR_PARTY' && h.partyId == null && atPlaza(h));
+    const atPlazaMotivated = this.hunters.filter(h =>
+      h.partyId == null &&
+      (h.state === 'HUNTING' || h.state === 'FIGHTING') &&
+      atPlaza(h) &&
+      (this.isCrowdedFor(h) || this.isAmbitiousFor(h)));
+    const pool = [...lfp, ...atPlazaMotivated];
+    if (pool.length === 0) return;
+    const unplaced = new Set(pool.map(h => h.id));
+
+    // 1. Fill existing parties first (same preferredZone, leader level ±3, cap 5).
     for (const p of this.parties.values()) {
       const live = p.memberIds
         .map(id => this.hunters.find(h => h.id === id))
@@ -666,24 +713,25 @@ export class GameSimulation {
       const leader = live.find(h => h.id === p.leaderId) ?? live[0];
       if (!leader) continue;
       p.leaderId = leader.id;
-      const lz = this.zoneOf(leader.gx, leader.gy);
-      for (const s of motivated) {
+      const lz = this.preferredZone(leader.level);
+      for (const s of pool) {
         if (live.length >= 5) break;
         if (!unplaced.has(s.id)) continue;
-        if (this.zoneOf(s.gx, s.gy) !== lz) continue;
+        if (this.preferredZone(s.level) !== lz) continue;
         if (Math.abs(s.level - leader.level) > 3) continue;
         p.memberIds.push(s.id);
         s.partyId = p.id;
         live.push(s);
         unplaced.delete(s.id);
+        this.leaveForHunt(s);
       }
     }
 
-    // 2. Form new parties: group by zone, greedy fill to 5 within ±3 levels.
+    // 2. Form new parties: group by preferredZone, greedy fill to 5 within ±3 levels.
     const byZone = new Map<number, Hunter[]>();
-    for (const s of motivated) {
+    for (const s of pool) {
       if (!unplaced.has(s.id)) continue;
-      const z = this.zoneOf(s.gx, s.gy);
+      const z = this.preferredZone(s.level);
       const list = byZone.get(z);
       if (list) list.push(s);
       else byZone.set(z, [s]);
@@ -698,7 +746,7 @@ export class GameSimulation {
           group.push(list[i]);
           i++;
         }
-        if (group.length < 2) continue; // leftover singles stay solo
+        if (group.length < 2) continue; // leftover singles wait out their timer
         const leader = group.reduce((a, b) => (b.level > a.level ? b : a));
         const ordered = [leader, ...group.filter(g => g.id !== leader.id)];
         const id = `party-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -706,6 +754,7 @@ export class GameSimulation {
         for (const m of ordered) m.partyId = id;
         const names = ordered.map(h => h.name.split(' ')[0]);
         this.addLog('combat', `${names.slice(0, 2).join(', ')} formed a party (${ordered.length})!`, leader.name);
+        for (const m of ordered) this.leaveForHunt(m);
       }
     }
   }
@@ -716,7 +765,7 @@ export class GameSimulation {
       this.addFloatingText('🏠 Town full! Upgrade Sanctuary Hall for +2 slots', SUMMON_PORTAL_POS.gx, SUMMON_PORTAL_POS.gy, '#fca5a5', 12);
       return null;
     }
-    const classes: CharacterClass[] = ['Berserker', 'Ranger', 'Sorcerer', 'Paladin'];
+    const classes: CharacterClass[] = ['Berserker', 'Ranger', 'Sorcerer', 'Paladin', 'Cleric'];
     const charClass = forcedClass || classes[Math.floor(Math.random() * classes.length)];
 
     // Rarity determination
@@ -766,6 +815,8 @@ export class GameSimulation {
       targetBuildingId: null,
       // Field party (runtime-only; joins live via formation)
       partyId: null,
+      // Plaza LFP muster cooldown (sim-seconds until re-queue allowed)
+      lfpCooldown: 0,
       weapon: {
         id: `wpn-${charClass}`,
         name: base.weaponName,
@@ -865,7 +916,7 @@ export class GameSimulation {
         exp: 0,
         expToNext: 100
       };
-    } else {
+    } else if (charClass === 'Paladin') {
       return {
         id: `skill-pala-${tier}`,
         name: tier === 1 ? 'Holy Smite' : (tier === 2 ? 'Radiant Aegis' : 'Judgement Pillar'),
@@ -876,6 +927,20 @@ export class GameSimulation {
         damageMultiplier: 1.7 + tier * 0.35,
         effectType: 'smite',
         description: 'Calls down divine wrath that damages foes and shields the hunter.',
+        exp: 0,
+        expToNext: 100
+      };
+    } else {
+      return {
+        id: `skill-cleric-${tier}`,
+        name: tier === 1 ? 'Mend Wounds' : (tier === 2 ? 'Soothing Radiance' : 'Renewing Dawn'),
+        level: 1,
+        maxLevel: 5,
+        cooldownMs: 5000,
+        lastUsedMs: 0,
+        damageMultiplier: 2.0 + tier * 0.4,
+        effectType: 'heal',
+        description: 'Channels holy light to heal the most wounded nearby ally.',
         exp: 0,
         expToNext: 100
       };
@@ -941,6 +1006,7 @@ export class GameSimulation {
       h.targetMonsterId = null;
       h.targetBuildingId = null;
       h.partyId = null; // retraining dissolves field parties (they reform live)
+      h.lfpCooldown = 0; // fresh legs: eligible for the plaza muster at once
       this.marchOutToHunt(h);
     }
     for (const b of this.buildings) b.currentVisitors = [];
@@ -954,18 +1020,23 @@ export class GameSimulation {
   // --------------------------------------------------------------------------
 
   private spawnInitialMonsters() {
-    // Zone 1: Whispering Forest (slimes, goblins, wolves)
+    // Zone 1: Whispering Forest (slimes, goblins, wolves) — pays bands 1-5
     for (let i = 0; i < 8; i++) {
       this.spawnMonster(1, Math.random() < 0.5 ? 'slime' : (Math.random() < 0.5 ? 'goblin' : 'wolf'));
     }
-    // Zone 2: Gloomy Graveyard (skeletons, ghouls)
-    for (let i = 0; i < 6; i++) {
-      this.spawnMonster(2, Math.random() < 0.6 ? 'skeleton' : 'ghoul');
-    }
-    // Zone 3: Volcanic Ruins (drakes)
+    // Zone 2: Gloomy Graveyard (skeletons, ghouls, wights) — pays bands 6-10
     for (let i = 0; i < 4; i++) {
+      const r = Math.random();
+      this.spawnMonster(2, r < 0.4 ? 'skeleton' : (r < 0.75 ? 'ghoul' : 'wight'));
+    }
+    for (let i = 0; i < 2; i++) {
+      this.spawnMonster(2, 'wight');
+    }
+    // Zone 3: Volcanic Ruins (drakes, golems) — pays bands 11-15
+    for (let i = 0; i < 3; i++) {
       this.spawnMonster(3, 'drake');
     }
+    this.spawnMonster(3, 'golem');
   }
 
   public spawnMonster(zone: 1 | 2 | 3, type: Monster['type'], isBoss: boolean = false): Monster {
@@ -1046,6 +1117,16 @@ export class GameSimulation {
       goldReward = 45;
       dropName = 'Venom Fang';
       dropIcon = 'fang';
+    } else if (type === 'wight') {
+      name = 'Grave Wight';
+      level = 9;
+      hp = 300;
+      atk = 55;
+      def = 14;
+      expReward = 90;
+      goldReward = 55;
+      dropName = 'Wight Shard';
+      dropIcon = 'bone';
     } else if (type === 'drake') {
       name = 'Magma Drake';
       level = 12;
@@ -1055,6 +1136,16 @@ export class GameSimulation {
       expReward = 150;
       goldReward = 107;
       dropName = 'Dragon Scale';
+      dropIcon = 'dragon_scale';
+    } else if (type === 'golem') {
+      name = 'Magma Golem';
+      level = 14;
+      hp = 650;
+      atk = 95;
+      def = 28;
+      expReward = 220;
+      goldReward = 150;
+      dropName = 'Magma Core';
       dropIcon = 'dragon_scale';
     } else if (type === 'boss_lich') {
       name = '☠ EVIL LICH LORD ☠';
@@ -1157,6 +1248,10 @@ export class GameSimulation {
       if (this.parties.size > 0) {
         for (const id of [...this.parties.keys()]) this.disbandParty(id);
       }
+      // No muster while parties are off: waiting seekers march straight out.
+      for (const h of this.hunters) {
+        if (h.state === 'LOOKING_FOR_PARTY') this.leaveForHunt(h);
+      }
       this.partyTimer = 0;
     } else {
       this.partyTimer += effectiveDt;
@@ -1253,12 +1348,16 @@ export class GameSimulation {
       }
     }
 
+    // Plaza LFP re-queue cooldown ticks down in real time
+    if (typeof hunter.lfpCooldown !== 'number' || !Number.isFinite(hunter.lfpCooldown)) hunter.lfpCooldown = 0;
+    if (hunter.lfpCooldown > 0) hunter.lfpCooldown -= dt;
+
     // Field parties are field-only: any town state dissolves membership.
     if (hunter.partyId && (hunter.state === 'RETURNING_TO_TOWN' ||
         hunter.state === 'SELLING_LOOT' || hunter.state === 'UPGRADING_GEAR' ||
         hunter.state === 'LEARNING_SKILL' || hunter.state === 'BREWING_ELIXIR' ||
         hunter.state === 'RECOVERING_CLINIC' || hunter.state === 'RESTING_TAVERN' ||
-        hunter.state === 'WANDERING_TOWN')) {
+        hunter.state === 'WANDERING_TOWN' || hunter.state === 'LOOKING_FOR_PARTY')) {
       this.removeFromParty(hunter);
     }
 
@@ -1409,7 +1508,7 @@ export class GameSimulation {
 
         // Move towards monster
         const dist = gridDistance(hunter.gx, hunter.gy, monster.gx, monster.gy);
-        const attackRange = (hunter.charClass === 'Ranger' || hunter.charClass === 'Sorcerer') ? 2.8 : 1.2;
+        const attackRange = (hunter.charClass === 'Ranger' || hunter.charClass === 'Sorcerer' || hunter.charClass === 'Cleric') ? 2.8 : 1.2;
 
         if (dist <= attackRange) {
           hunter.state = 'FIGHTING';
@@ -1599,6 +1698,23 @@ export class GameSimulation {
         break;
       }
 
+      case 'LOOKING_FOR_PARTY': {
+        // Plaza LFP muster: walk to/stay at the town plaza (29,29) while
+        // the matching pass looks for a level-compatible group. No shop
+        // targeting, no errand evaluation, no combat out here (monsters
+        // never enter town, and monster AI only engages HUNTING/FIGHTING).
+        // On the 12s wait budget expiring with no match, march out SOLO
+        // and start the 90s re-queue cooldown so seekers can't spin.
+        this.moveTowards(hunter, 29, 29, hunter.speed * 60 * dt);
+        hunter.stateTimer -= dt;
+        if (hunter.stateTimer <= 0) {
+          hunter.lfpCooldown = 90;
+          this.addFloatingText('🚶 No party found — hunting solo', hunter.gx, hunter.gy, '#94a3b8', 11);
+          this.leaveForHunt(hunter);
+        }
+        break;
+      }
+
       default: {
         // Safety net: no hunter may ever freeze in an unhandled state.
         // Send them back out to the hunting grounds.
@@ -1673,6 +1789,51 @@ export class GameSimulation {
     hunter.stateTimer = 1.0 / (1 + hunter.speed * 10);
     hunter.isAttacking = true;
     hunter.attackAnimTimer = 0.35;
+
+    // Cleric heal AI: if a heal skill is ready and a hurt ally is near,
+    // mend them INSTEAD of attacking this tick (no damage to the monster,
+    // no EXP — support tax, transaction-free).
+    if (hunter.charClass === 'Cleric') {
+      const nowMs = Date.now();
+      const healSkill = hunter.skills.find(s => s.effectType === 'heal' && nowMs - s.lastUsedMs >= s.cooldownMs) ?? null;
+      if (healSkill) {
+        const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
+        const partyIds = party ? new Set(this.partyMembers(hunter).map(m => m.id)) : null;
+        let target: Hunter | null = null;
+        let targetFrac = 0.75;
+        const consider = (h: Hunter) => {
+          if (h.hp <= 0) return;
+          if (gridDistance(hunter.gx, hunter.gy, h.gx, h.gy) > 5) return;
+          const frac = h.hp / Math.max(1, this.effectiveMaxHp(h));
+          if (frac >= 0.75) return;
+          if (!target || frac < targetFrac) { target = h; targetFrac = frac; }
+        };
+        // Party members first, then anyone else in range (including self).
+        if (partyIds) for (const h of this.hunters) { if (partyIds.has(h.id)) consider(h); }
+        if (!target) for (const h of this.hunters) { if (partyIds && partyIds.has(h.id)) continue; consider(h); }
+        if (target) {
+          const t: Hunter = target;
+          healSkill.lastUsedMs = nowMs;
+          const heal = Math.round(t.maxHp * 0.25 + hunter.atk * 0.8);
+          t.hp = Math.min(this.effectiveMaxHp(t), t.hp + heal);
+          this.addFloatingText(`+${heal}`, t.gx, t.gy - 0.5, '#4ade80', 12);
+          this.skillVfxs.push({
+            id: `vfx-heal-${Date.now()}-${Math.random()}`,
+            type: 'heal',
+            startX: t.gx,
+            startY: t.gy,
+            targetX: t.gx,
+            targetY: t.gy,
+            duration: 0.6,
+            elapsed: 0,
+            color: '#4ade80'
+          });
+          soundFx.playHeal();
+          return;
+        }
+      }
+      // No hurt ally in range: fall through to the normal (weak) attack path.
+    }
 
     // Check available skills for auto-cast (round-robin: oldest ready first
     // so 2nd/3rd skills actually get casts instead of skills[0] hogging).
@@ -2059,7 +2220,7 @@ export class GameSimulation {
 
   // When hunter arrives at a designated building
   private executeBuildingVisit(hunter: Hunter, building: Building) {
-    building.currentVisitors.push(hunter.id);
+    if (!building.currentVisitors.includes(hunter.id)) building.currentVisitors.push(hunter.id);
 
     if (building.type === 'TRADING_POST') {
       hunter.state = 'SELLING_LOOT';
@@ -2510,6 +2671,15 @@ export class GameSimulation {
         this.updateMonsterRoam(monster, dt);
       }
     } else if (monster.state === 'COMBAT') {
+      // Zone leash (root fix): a monster that has been kited outside its
+      // home zone disengages at once — monsters never leave their hunting
+      // grounds. Next ticks IDLE finds no town prey (town hunters are
+      // RETURNING/shopping) and roam targets home bounds via existing A*.
+      if (this.zoneOf(monster.gx, monster.gy) !== monster.zone) {
+        monster.state = 'IDLE';
+        monster.targetHunterId = null;
+        return;
+      }
       const hunter = this.hunters.find(h => h.id === monster.targetHunterId);
       if (!hunter || hunter.hp <= 0 || hunter.state === 'RETURNING_TO_TOWN') {
         monster.state = 'IDLE';
@@ -2594,8 +2764,13 @@ export class GameSimulation {
       hunter.stateTimer = 4.0;
       hunter.targetMonsterId = null;
       hunter.targetBuildingId = clinic.id;
-      clinic.currentVisitors.push(hunter.id);
+      if (!clinic.currentVisitors.includes(hunter.id)) clinic.currentVisitors.push(hunter.id);
     }
+    // Predator satisfaction: a monster that downs its prey loses interest
+    // instead of spawn-camping the 1-HP victim.
+    monster.targetHunterId = null;
+    monster.state = 'IDLE';
+    monster.attackCooldown = 1.5;
   }
 
   /** Zone repopulation targets derived from the total population setting. */
@@ -2615,12 +2790,13 @@ export class GameSimulation {
 
     const z2Count = this.monsters.filter(m => m.zone === 2).length;
     if (z2Count < target.z2) {
-      this.spawnMonster(2, Math.random() < 0.6 ? 'skeleton' : 'ghoul');
+      const r = Math.random();
+      this.spawnMonster(2, r < 0.4 ? 'skeleton' : (r < 0.75 ? 'ghoul' : 'wight'));
     }
 
     const z3Count = this.monsters.filter(m => m.zone === 3 && !m.isBoss).length;
     if (z3Count < target.z3) {
-      this.spawnMonster(3, 'drake');
+      this.spawnMonster(3, Math.random() < 0.7 ? 'drake' : 'golem');
     }
   }
 
@@ -2685,9 +2861,36 @@ export class GameSimulation {
     }
   }
 
+  /**
+   * Count of live party members (incl. self; solo = self only) for whom a
+   * kill on this monster would pay positive EXP: boss always pays, else
+   * member levelDiff (member.level - monster.level) < grayGap. Diminished
+   * (G-2/G-1) still counts as paying — only fully gray (diff >= G) does not.
+   */
+  private earningCountFor(monster: Monster, hunter: Hunter): number {
+    const party = this.agentConfig.partiesEnabled ? this.partyOf(hunter) : null;
+    const members = party ? this.partyMembers(hunter) : [hunter];
+    const list = members.length > 0 ? members : [hunter];
+    const G = this.agentConfig.grayGap;
+    let n = 0;
+    for (const m of list) {
+      if (monster.isBoss || m.level - monster.level < G) n++;
+    }
+    return n;
+  }
+
   private findBestMonsterForHunter(hunter: Hunter, ignoreClaims = false): Monster | null {
     // Pick the best level-matched monster in the level-appropriate zone
-    // (Lv11+ volcano, Lv6+ graveyard, else forest); best match anywhere as fallback.
+    // (bands: forest 1-5, crypt 6-10, volcano 11-15; Lv11+ volcano, Lv6+
+    // graveyard, else forest); best match anywhere as fallback.
+    // Party leveling goal: the score subtracts 2.5 per live party member
+    // (incl. self) for whom the kill would pay positive EXP (levelDiff <
+    // grayGap, bosses always pay), so the group converges on prey the whole
+    // party earns from instead of gray-for-one picks. Solo hunters use the
+    // same term with self only — this CHANGES solo picks on purpose: gray
+    // prey no longer ties with paying prey at equal level-match+distance,
+    // the hunter now prefers prey that pays them (the gray-trap escape and
+    // uphill transit utilities still handle the reverse direction).
     let preferredZone: 1 | 2 | 3 = 1;
     if (hunter.level >= 11) preferredZone = 3;
     else if (hunter.level >= 6) preferredZone = 2;
@@ -2702,13 +2905,15 @@ export class GameSimulation {
         // already-claimed monsters so a lone nearby monster with several
         // claimants loses to a slightly farther unclaimed one. The
         // unpenalized lens (ignoreClaims) skips this spread pressure.
+        // EXP-alignment: -2.5 per live party member (incl. self) who earns
+        // positive EXP from this kill pulls the party toward shared-pay prey.
         let claimants = 0;
         if (!ignoreClaims) {
           for (const h of this.hunters) {
             if (h.id !== hunter.id && h.targetMonsterId === m.id) claimants++;
           }
         }
-        const score = (Math.abs(m.level - hunter.level) * 3 + d) * (1 + 0.6 * claimants);
+        const score = (Math.abs(m.level - hunter.level) * 3 + d) * (1 + 0.6 * claimants) - 2.5 * this.earningCountFor(m, hunter);
         if (score < bestScore) {
           bestScore = score;
           best = m;
@@ -3091,6 +3296,15 @@ export class GameSimulation {
         // Field parties are runtime-only: they reform live, so every load
         // dissolves them (parties Map itself is never snapshotted).
         h.partyId = null;
+        // Plaza LFP muster is transient too: old saves lack the cooldown,
+        // and waiting seekers resume as plaza strollers (hub re-evaluates).
+        if (typeof h.lfpCooldown !== 'number' || !Number.isFinite(h.lfpCooldown)) h.lfpCooldown = 0;
+        if (h.state === 'LOOKING_FOR_PARTY') {
+          h.state = 'WANDERING_TOWN';
+          h.stateTimer = 1.5;
+          h.targetMonsterId = null;
+          h.targetBuildingId = null;
+        }
         if (typeof h.isAttacking !== 'boolean') h.isAttacking = false;
         // Migrate saves from before the mood/morale system
         if (typeof h.mood !== 'number' || !Number.isFinite(h.mood)) h.mood = 100;
@@ -3132,6 +3346,7 @@ export class GameSimulation {
                 else if (h.charClass === 'Ranger') base = 1.6 + tier * 0.35;
                 else if (h.charClass === 'Sorcerer') base = 2.2 + tier * 0.5;
                 else if (h.charClass === 'Paladin') base = 1.7 + tier * 0.35;
+                else if (h.charClass === 'Cleric') base = 2.0 + tier * 0.4;
               }
               if (base !== null) {
                 skill.damageMultiplier = base + 0.3 * (clamped - 1);
