@@ -776,10 +776,10 @@ export class PixiRenderer {
   }
 
   /**
-   * Skill-zone layer (below sprites): soft ground discs for most kinds, but
-   * the Berserker storm is particle-only (no beams, no solid discs) — just
-   * spinning arc slashes + dust motes around the whirling hunter. Ranger
-   * arrows rain DOWN vertically (falling shafts, fading on ground impact).
+   * Skill-zone layer (below sprites): soft ground discs + kind motifs.
+   * Berserker storm has no ground visual — damage still ticks at the anchor
+   * but the whirlwind particles orbit the warrior itself (see renderHunters).
+   * Ranger arrows rain DOWN vertically (falling shafts, fading on impact).
    * Fixed zones sit static with a pulse; auras ride the caster (sim already
    * re-anchors x/y). Everything fades out over the last 1s.
    */
@@ -789,6 +789,9 @@ export class PixiRenderer {
     if (!zones || zones.length === 0) return;
 
     for (const z of zones) {
+      // Whirlwind storm: no ground visual — particles orbit the warrior
+      // itself (see renderHunters). Damage still ticks at the zone anchor.
+      if (z.kind === 'storm') continue;
       const p = gridToScreen(z.x, z.y);
       const color = zoneColor(z.kind);
       const fade = Math.min(1, Math.max(0, (z.duration - z.elapsed) / 1));
@@ -800,33 +803,12 @@ export class PixiRenderer {
       const g = new Graphics();
       const cy = p.y + 10;
 
-      // Soft ground fill for non-storm kinds (no ring strokes): layered
-      // translucent discs give a radial feel; kind motifs carry the readout.
-      // Storm is particle-only — no beams, no solid discs.
-      if (z.kind !== 'storm') {
-        g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.14 + 0.06 * pulse) * fade });
-        g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
-      }
+      // Soft ground fill (no ring strokes): layered translucent discs give
+      // a radial feel; kind motifs carry the readout.
+      g.ellipse(p.x, cy, rx, ry).fill({ color, alpha: (0.14 + 0.06 * pulse) * fade });
+      g.ellipse(p.x, cy, rx * 0.66, ry * 0.66).fill({ color, alpha: (0.10 + 0.05 * pulse) * fade });
 
-      if (z.kind === 'storm') {
-        // Particle-only whirlwind: spinning arc slashes (slash-texture
-        // white/red palette, whirlwind-cyclone rhythm) + drifting dust
-        // motes. No vertical beams, no filled discs.
-        const rot = z.elapsed * 5;
-        const slashColors = [0xf8fafc, 0xef4444, 0xe0f2fe];
-        for (let a = 0; a < 3; a++) {
-          const ang = rot + (a / 3) * Math.PI * 2;
-          g.arc(p.x, cy - 8, rx * 0.5, ang, ang + Math.PI * 0.6).stroke({ color: slashColors[a % 3], width: 3, alpha: 0.85 * fade });
-        }
-        // Dust motes kicked up around the whirling hunter.
-        for (let m = 0; m < 6; m++) {
-          const orbit = z.elapsed * 2.2 + m * (Math.PI * 2 / 6);
-          const frac = 0.45 + 0.35 * ((m * 37 % 10) / 10);
-          const mx = p.x + Math.cos(orbit) * rx * frac;
-          const my = cy - 6 + Math.sin(orbit) * ry * frac - ((m * 13 % 7));
-          g.circle(mx, my, 2).fill({ color: m % 2 === 0 ? 0xd6c9a8 : 0x94a3b8, alpha: 0.55 * fade });
-        }
-      } else if (z.kind === 'burn') {
+      if (z.kind === 'burn') {
         // Flickering ember core.
         const flicker = 0.6 + 0.4 * Math.abs(Math.sin(z.elapsed * 9 + 1));
         g.ellipse(p.x, cy, rx * 0.45, ry * 0.45).fill({ color: 0xfacc15, alpha: 0.35 * flicker * fade });
@@ -968,11 +950,10 @@ export class PixiRenderer {
         hData.sprite.y += dirY * punch;
       }
 
-      // Whirlwind revamp (visual only): when this hunter's own storm zone is
-      // active, spin the hunter sprite itself while they stand inside/near it.
+      // Whirlwind: spin the warrior sprite + orbiting dust particles around
+      // the warrior itself (no ground circle, no cyclone ring sprite).
       // Facing stays texture-driven (frame lookup above), so rotation is a
-      // pure overlay — always reset to 0 when the whirl ends. The storm disc
-      // + cyclone arcs in renderZones remain as the dust trail underneath.
+      // pure overlay — always reset to 0 when the whirl ends.
       const ownStorms = this.simulation.activeZones.filter(
         z => z.kind === 'storm' && z.sourceId === hunter.id
       );
@@ -1034,6 +1015,20 @@ export class PixiRenderer {
       // HP fill
       const hpColor = hpRatio > 0.5 ? 0x22c55e : (hpRatio > 0.25 ? 0xeab308 : 0xef4444);
       hData.hpBar.rect(screenPos.x - barW / 2, screenPos.y - 42, barW * hpRatio, barH).fill({ color: hpColor });
+      // Whirlwind particles: small dust motes orbiting the warrior.
+      // Dots only — no circle/ring strokes.
+      if (whirling) {
+        const fade = Math.min(1, whirl.burst > 0 ? whirl.burst / 0.9 + 0.3 : 1);
+        for (let m = 0; m < 7; m++) {
+          const orbit = whirl.rotation * 1.4 + m * (Math.PI * 2 / 7);
+          const ox = screenPos.x + Math.cos(orbit) * 16;
+          const oy = screenPos.y - 12 + Math.sin(orbit) * 8 - ((m * 13) % 5);
+          hData.hpBar.circle(ox, oy, m % 2 === 0 ? 2.2 : 1.6).fill({
+            color: m % 3 === 0 ? 0xf8fafc : m % 3 === 1 ? 0xd6c9a8 : 0x94a3b8,
+            alpha: 0.75 * Math.min(1, fade),
+          });
+        }
+      }
       hData.hpBar.zIndex = hData.sprite.zIndex + 5;
 
       // Name & Level (party icon prefix beside the name; LFP 🔍 takes
@@ -1156,7 +1151,9 @@ export class PixiRenderer {
     this.simulation.skillVfxs.forEach(vfx => {
       // Staggered volley chains spawn with negative elapsed as a spawn
       // delay — pending arrows stay hidden until their offset elapses.
-      if (vfx.elapsed < 0) return;
+      // Whirlwind circle sprite removed — the warrior spin + orbiting
+      // particles in renderHunters carry the effect.
+      if (vfx.elapsed < 0 || vfx.type === 'whirlwind') return;
       const startScreen = gridToScreen(vfx.startX, vfx.startY);
       const targetScreen = gridToScreen(vfx.targetX, vfx.targetY);
       const dx = targetScreen.x - startScreen.x;
@@ -1167,7 +1164,7 @@ export class PixiRenderer {
       // Per-effect pacing: arrows/slashes snap fast, pillars linger
       const pacing: Record<string, number> = {
         multishot: 0.65, slash: 0.7, impact: 0.8, heal: 1.0,
-        meteor: 1.0, whirlwind: 1.0, smite: 1.15, holy_burst: 1.15, levelup: 1.2,
+        meteor: 1.0, smite: 1.15, holy_burst: 1.15, levelup: 1.2,
         ballad: 0.9, encore: 1.0,
       };
       const visualDuration = vfx.duration * (pacing[vfx.type] ?? 1.0);
@@ -1203,12 +1200,6 @@ export class PixiRenderer {
         sprite.x = startScreen.x + dx * t;
         sprite.y = startScreen.y + dy * t - Math.sin(progress * Math.PI) * 46;
         sprite.scale.set(0.8 + progress * 0.9);
-      } else if (vfx.type === 'whirlwind') {
-        // Melee cyclone stays on the caster, spins up and expands
-        sprite.x = startScreen.x;
-        sprite.y = startScreen.y - 10;
-        sprite.rotation = progress * Math.PI * 4;
-        sprite.scale.set(0.7 + pop * 1.1);
       } else if (vfx.type === 'smite') {
         // Holy pillar strikes the target and lingers with a flicker
         sprite.x = targetScreen.x;

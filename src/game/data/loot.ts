@@ -107,6 +107,16 @@ export function epicEffectDescription(effectId: EquipmentEffectId, value: number
   }
 }
 
+/** Display name: rarity prefix for Uncommon/Rare/Epic, plain base name for Common.
+ * Stored equipment.name is always the base name (no rarity prefix). */
+export function equipmentDisplayName(rarity: EquipmentRarity | undefined | null, baseName: string): string {
+  if (!baseName) return '';
+  // Strip a legacy embedded prefix (old saves stored "Uncommon Iron ...").
+  const clean = baseName.replace(/^(Common|Uncommon|Rare|Epic)\s+/i, '');
+  if (!rarity || rarity === 'Common') return clean;
+  return `${rarity} ${clean}`;
+}
+
 /** Gear tier prefix: 1 Bronze … 5 Dragonforged. */
 export function getEquipmentPrefix(tier: number): string {
   const prefixes = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Dragonforged'];

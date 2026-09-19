@@ -44,6 +44,7 @@ export {
   rarityBorderClass,
   EPIC_DEFS,
   epicEffectDescription,
+  equipmentDisplayName,
   getEquipmentPrefix,
   zoneGearTier,
 } from './loot';

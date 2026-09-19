@@ -50,6 +50,7 @@ import {
   rarityBorderClass as dataRarityBorderClass,
   EPIC_DEFS as DATA_EPIC_DEFS,
   epicEffectDescription as dataEpicEffectDescription,
+  equipmentDisplayName as dataEquipmentDisplayName,
   getEquipmentPrefix as dataGetEquipmentPrefix,
   zoneGearTier as dataZoneGearTier,
   buildingCapacity as dataBuildingCapacity,
@@ -114,6 +115,7 @@ export const skillExpToNext = dataSkillExpToNext;
 export type { EpicDef };
 export const EPIC_DEFS: EpicDef[] = DATA_EPIC_DEFS;
 export const epicEffectDescription = dataEpicEffectDescription;
+export const equipmentDisplayName = dataEquipmentDisplayName;
 
 // --------------------------------------------------------------------------
 // Skill mastery with diminishing returns (DR): cost scales (30 * rank),
@@ -2114,7 +2116,9 @@ export class GameSimulation {
   private buildStatGear(tier: number, rarity: EquipmentRarity, slot: 'weapon' | 'armor', forClass: CharacterClass, monster: Monster): ItemDrop {
     const mult = RARITY_STAT_MULT[rarity] ?? 1;
     const noun = slot === 'weapon' ? this.classWeaponNoun(forClass) : this.classArmorNoun(forClass);
-    const name = `${rarity} ${this.getEquipmentPrefix(tier)} ${forClass} ${noun}`;
+    // Base name only — rarity is stored separately and added at display time
+    // via equipmentDisplayName(). (Embedding it here caused "Uncommon Uncommon ...".)
+    const name = `${this.getEquipmentPrefix(tier)} ${forClass} ${noun}`;
     const equipment: Equipment = slot === 'weapon'
       ? {
           id: `eq-wpn-${forClass}-${tier}-${rarity}-${Date.now().toString(36)}`,
@@ -2212,8 +2216,9 @@ export class GameSimulation {
     if (slot === 'weapon') hunter.weapon = { ...eq };
     else hunter.armor = { ...eq };
     hunter.hp = Math.min(this.effectiveMaxHp(hunter), hunter.hp + Math.max(0, eq.hpBonus - current.hpBonus));
-    this.addFloatingText(`⚔️ ${hunter.name} equipped ${eq.name}!`, hunter.gx, hunter.gy - 0.5, rarityHex(eq.rarity), 12);
-    this.addLog('upgrade', `${hunter.name} equipped ${eq.rarity} ${eq.name}${oldValue > 0 ? ` (+${oldValue}g trade-in)` : ''}.`, hunter.name);
+    const displayName = dataEquipmentDisplayName(eq.rarity, eq.name);
+    this.addFloatingText(`⚔️ ${hunter.name} equipped ${displayName}!`, hunter.gx, hunter.gy - 0.5, rarityHex(eq.rarity), 12);
+    this.addLog('upgrade', `${hunter.name} equipped ${displayName}${oldValue > 0 ? ` (+${oldValue}g trade-in)` : ''}.`, hunter.name);
     return true;
   }
 
@@ -3787,17 +3792,25 @@ export class GameSimulation {
         // Drop legacy generic skillPoints (now usage-based per-skill EXP).
         if ('skillPoints' in (h as unknown as Record<string, unknown>)) delete (h as unknown as Record<string, unknown>).skillPoints;
         // Migrate gear to rarity model (shop gear = Common; bagged gear keeps rolls).
+        // Also strip legacy embedded rarity prefixes ("Uncommon Iron ...")
+        // — names are now stored bare, rarity added at display time.
         for (const slot of ['weapon', 'armor', 'accessory'] as const) {
           const eq = (h as unknown as Record<string, unknown>)[slot] as Equipment | undefined;
           if (eq && typeof eq === 'object') {
             if (typeof eq.rarity !== 'string') eq.rarity = 'Common';
             if (typeof eq.tier !== 'number' || !Number.isFinite(eq.tier)) eq.tier = 1;
+            if (typeof eq.name === 'string') eq.name = eq.name.replace(/^(Common|Uncommon|Rare|Epic)\s+/i, '');
           }
         }
         if (Array.isArray(h.inventory)) {
           for (const item of h.inventory) {
             if (item && typeof item === 'object' && item.equipment && typeof item.equipment === 'object') {
               if (typeof item.equipment.rarity !== 'string') item.equipment.rarity = 'Uncommon';
+              if (typeof item.equipment.name === 'string') {
+                const clean = item.equipment.name.replace(/^(Common|Uncommon|Rare|Epic)\s+/i, '');
+                item.equipment.name = clean;
+                if (typeof item.name === 'string') item.name = clean;
+              }
               if (typeof item.value !== 'number' || !Number.isFinite(item.value)) {
                 item.value = gearSellPrice(item.equipment.tier ?? 1, item.equipment.rarity);
               }
