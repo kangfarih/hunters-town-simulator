@@ -368,6 +368,15 @@ export function gearSellPrice(tier: number, rarity: EquipmentRarity): number {
   return Math.round(tier * 40 * (GEAR_SELL_MULT[rarity] ?? 1));
 }
 
+// --------------------------------------------------------------------------
+// Skill mastery: each cast grants 2 + cooldownSec EXP (longer CD = more).
+// At ~5.5-7 EXP/cast, SKILL_EXP_TO_NEXT = 30 means ~5 casts to READY —
+// fast enough to see Rank 2-3 in a session, with Academy gold + trips
+// still gating the climb to max.
+// --------------------------------------------------------------------------
+
+export const SKILL_EXP_TO_NEXT = 30;
+
 interface EpicDef {
   name: string;
   slot: 'weapon' | 'armor';
@@ -925,7 +934,7 @@ export class GameSimulation {
         effectType: tier === 2 ? 'whirlwind' : 'slash',
         description: 'Strikes viciously in a wide arc dealing heavy physical damage.',
         exp: 0,
-        expToNext: 100
+        expToNext: SKILL_EXP_TO_NEXT
       };
     } else if (charClass === 'Ranger') {
       return {
@@ -939,7 +948,7 @@ export class GameSimulation {
         effectType: 'multishot',
         description: 'Fires rapid enchanted arrows piercing monster defenses.',
         exp: 0,
-        expToNext: 100
+        expToNext: SKILL_EXP_TO_NEXT
       };
     } else if (charClass === 'Sorcerer') {
       return {
@@ -953,7 +962,7 @@ export class GameSimulation {
         effectType: 'meteor',
         description: 'Summons a blazing arcane meteor blasting all surrounding beasts.',
         exp: 0,
-        expToNext: 100
+        expToNext: SKILL_EXP_TO_NEXT
       };
     } else if (charClass === 'Paladin') {
       return {
@@ -967,7 +976,7 @@ export class GameSimulation {
         effectType: 'smite',
         description: 'Calls down divine wrath that damages foes and shields the hunter.',
         exp: 0,
-        expToNext: 100
+        expToNext: SKILL_EXP_TO_NEXT
       };
     } else {
       return {
@@ -981,7 +990,7 @@ export class GameSimulation {
         effectType: 'heal',
         description: 'Channels holy light to heal the most wounded nearby ally.',
         exp: 0,
-        expToNext: 100
+        expToNext: SKILL_EXP_TO_NEXT
       };
     }
   }
@@ -1932,7 +1941,7 @@ export class GameSimulation {
       const isGrayTarget = !monster.isBoss && (hunter.level - monster.level >= this.agentConfig.grayGap);
       if (!isGrayTarget && readySkill.level < readySkill.maxLevel) {
         const curExp = typeof readySkill.exp === 'number' && Number.isFinite(readySkill.exp) ? readySkill.exp : 0;
-        const need = typeof readySkill.expToNext === 'number' && Number.isFinite(readySkill.expToNext) ? readySkill.expToNext : 100;
+        const need = typeof readySkill.expToNext === 'number' && Number.isFinite(readySkill.expToNext) ? readySkill.expToNext : SKILL_EXP_TO_NEXT;
         const gain = 2 + readySkill.cooldownMs / 1000;
         readySkill.exp = Math.min(need, curExp + gain);
         if (readySkill.exp >= need) {
@@ -2519,7 +2528,7 @@ export class GameSimulation {
       tavern: moodU < tavernFrac ? (tavernFrac - moodU) / tavernFrac : 0,            // town: <tavernMood goes, lower = more urgent
       lab: (labOk || tonicOk) ? 0.2 + 0.6 * Math.max(elixirNeed / Math.max(1, this.elixirCapacity()), tonicNeed / Math.max(1, this.tonicCapacity())) : 0,
       forge: forgeOk ? 0.5 : 0,
-      academy: hunter.skills.some(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : 100)) ? 0.45 : 0,  // NEVER beats a healthy hunt alone
+      academy: hunter.skills.some(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : SKILL_EXP_TO_NEXT)) ? 0.45 : 0,  // NEVER beats a healthy hunt alone
       clinic: hpU < 0.7 ? (0.7 - hpU) / 0.7 : 0,
       transit: 0,   // filled by caller (field only)
       hunt: this.agentConfig.huntBaseline,    // baseline: needs must earn the interruption
@@ -2702,7 +2711,7 @@ export class GameSimulation {
           // Lowest rank first so 2nd/3rd skills catch up instead of skills[0]
           // hogging. More READY skills re-queue via town hub (forge pattern).
           const ready = hunter.skills
-            .filter(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : 100))
+            .filter(s => s.level < s.maxLevel && (typeof s.exp === 'number' ? s.exp : 0) >= (typeof s.expToNext === 'number' ? s.expToNext : SKILL_EXP_TO_NEXT))
             .sort((a, b) => a.level - b.level);
           if (ready.length === 0) break;
           const skill = ready[0];
@@ -3600,9 +3609,10 @@ export class GameSimulation {
         if (Array.isArray(h.skills)) {
           for (const skill of h.skills) {
             if (!skill || typeof skill !== 'object') continue;
-            // Migrate to usage-based EXP (fixed 100 to READY).
+            // Migrate to usage-based EXP (SKILL_EXP_TO_NEXT to READY).
+            // Old 100-threshold saves collapse: exp clamps into the new need.
             if (typeof skill.exp !== 'number' || !Number.isFinite(skill.exp)) skill.exp = 0;
-            if (typeof skill.expToNext !== 'number' || !Number.isFinite(skill.expToNext)) skill.expToNext = 100;
+            if (typeof skill.expToNext !== 'number' || !Number.isFinite(skill.expToNext) || skill.expToNext !== SKILL_EXP_TO_NEXT) skill.expToNext = SKILL_EXP_TO_NEXT;
             skill.exp = Math.max(0, Math.min(skill.expToNext, skill.exp));
             const max = (typeof skill.maxLevel === 'number' && Number.isFinite(skill.maxLevel))
               ? skill.maxLevel
