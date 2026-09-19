@@ -369,6 +369,44 @@ export function gearSellPrice(tier: number, rarity: EquipmentRarity): number {
 }
 
 // --------------------------------------------------------------------------
+// Rarity colors: Common white, Uncommon green, Rare blue, Epic purple.
+// Single source of truth for UI text/border + canvas floating-text hex.
+// --------------------------------------------------------------------------
+
+export const RARITY_HEX: Record<EquipmentRarity, string> = {
+  Common: '#e2e8f0', // slate-200 white
+  Uncommon: '#4ade80', // green
+  Rare: '#60a5fa', // blue
+  Epic: '#c084fc', // purple
+};
+
+export const RARITY_TEXT_CLASS: Record<EquipmentRarity, string> = {
+  Common: 'text-slate-200',
+  Uncommon: 'text-emerald-400',
+  Rare: 'text-blue-400',
+  Epic: 'text-purple-400',
+};
+
+export const RARITY_BORDER_CLASS: Record<EquipmentRarity, string> = {
+  Common: 'border-slate-700/60',
+  Uncommon: 'border-emerald-500/50',
+  Rare: 'border-blue-500/50',
+  Epic: 'border-purple-500/60',
+};
+
+export function rarityHex(rarity: EquipmentRarity | undefined | null): string {
+  return RARITY_HEX[rarity ?? 'Common'] ?? RARITY_HEX.Common;
+}
+
+export function rarityTextClass(rarity: EquipmentRarity | undefined | null): string {
+  return RARITY_TEXT_CLASS[rarity ?? 'Common'] ?? RARITY_TEXT_CLASS.Common;
+}
+
+export function rarityBorderClass(rarity: EquipmentRarity | undefined | null): string {
+  return RARITY_BORDER_CLASS[rarity ?? 'Common'] ?? RARITY_BORDER_CLASS.Common;
+}
+
+// --------------------------------------------------------------------------
 // Skill mastery: each cast grants 2 + cooldownSec EXP (longer CD = more).
 // At ~5.5-7 EXP/cast, SKILL_EXP_TO_NEXT = 30 means ~5 casts to READY —
 // fast enough to see Rank 2-3 in a session, with Academy gold + trips
@@ -2135,8 +2173,7 @@ export class GameSimulation {
     if (slot === 'weapon') hunter.weapon = { ...eq };
     else hunter.armor = { ...eq };
     hunter.hp = Math.min(this.effectiveMaxHp(hunter), hunter.hp + Math.max(0, eq.hpBonus - current.hpBonus));
-    const color = eq.rarity === 'Epic' ? '#e879f9' : (eq.rarity === 'Rare' ? '#60a5fa' : '#4ade80');
-    this.addFloatingText(`⚔️ ${hunter.name} equipped ${eq.name}!`, hunter.gx, hunter.gy - 0.5, color, 12);
+    this.addFloatingText(`⚔️ ${hunter.name} equipped ${eq.name}!`, hunter.gx, hunter.gy - 0.5, rarityHex(eq.rarity), 12);
     this.addLog('upgrade', `${hunter.name} equipped ${eq.rarity} ${eq.name}${oldValue > 0 ? ` (+${oldValue}g trade-in)` : ''}.`, hunter.name);
     return true;
   }
@@ -2194,7 +2231,7 @@ export class GameSimulation {
     if (gearDrop) {
       dropTotals = [...dropTotals, gearDrop];
       if (gearDrop.equipment?.rarity === 'Epic') {
-        this.addFloatingText(`💜 EPIC DROP: ${gearDrop.name}!`, monster.gx, monster.gy - 0.5, '#e879f9', 14);
+        this.addFloatingText(`💜 EPIC DROP: ${gearDrop.name}!`, monster.gx, monster.gy - 0.5, rarityHex('Epic'), 14);
         this.addLog('boss', `${hunter.name} looted EPIC ${gearDrop.name} from ${monster.name}!`, hunter.name);
       }
     }
