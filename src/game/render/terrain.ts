@@ -6,14 +6,28 @@ import { gridToScreen, MAP_GRID_WIDTH, MAP_GRID_HEIGHT } from '../isometric';
 import { reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from '../pathfinding';
 import { dungeonAt, BOSS_ARENAS, DUNGEON_PORTAL, DUNGEON_EXIT, lobbySeatPositions } from '../dungeon';
 import { SUMMON_PORTAL_POS } from '../simulation';
+import { INITIAL_BUILDINGS } from '../data/buildings';
 import { createIsoTileTexture } from '../textures/tiles';
 import { createChairTexture } from '../objects/chair';
+
+// Lamplight courtyards: town tiles within 2 cells of a building door or
+// the summon portal get the warm dither variant. Static (placements are
+// data, not sim state), computed once.
+const LIT_SPOTS: { x: number; y: number }[] = [
+  ...INITIAL_BUILDINGS.map(b => ({ x: b.doorGx, y: b.doorGy })),
+  { x: SUMMON_PORTAL_POS.gx, y: SUMMON_PORTAL_POS.gy },
+];
+
+function isLitTile(gx: number, gy: number): boolean {
+  return LIT_SPOTS.some(s => Math.abs(s.x - gx) <= 2 && Math.abs(s.y - gy) <= 2);
+}
 
 export class TerrainLayer {
   private tileTextures: Record<string, Texture> = {};
 
-  private tileTexture(type: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark'): Texture {
-    return (this.tileTextures[type] ??= createIsoTileTexture(type));
+  private tileTexture(type: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark', lit = false): Texture {
+    const key = lit ? `${type}+lit` : type;
+    return (this.tileTextures[key] ??= createIsoTileTexture(type, lit));
   }
 
   /** Rebuild the whole static grid into container (clears first). */
@@ -66,7 +80,8 @@ export class TerrainLayer {
           tileType = 'volcanic_rock';
         }
 
-        const texture = this.tileTexture(tileType);
+        const lit = (tileType === 'town_cobble' || tileType === 'town_wood') && isLitTile(gx, gy);
+        const texture = this.tileTexture(tileType, lit);
         if (texture) {
           const sprite = new Sprite(texture);
           const screenPos = gridToScreen(gx, gy);

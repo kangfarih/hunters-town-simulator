@@ -1,11 +1,13 @@
 // Isometric terrain tile painter: one 64x32 diamond per zone type with a
 // dark depth skirt so tiles seat into each other on the 2:1 grid.
+// All colors come from the palette canon (../palette) — no raw hex here.
 
 import { Texture } from 'pixi.js';
 import { TILE_WIDTH, TILE_HEIGHT } from '../isometric';
+import { TERRAIN } from '../palette';
 import { createPixelCanvas } from '../objects/iso';
 
-export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark'): Texture {
+export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest_grass' | 'graveyard_soil' | 'volcanic_rock' | 'stone_road' | 'reserve_dark', lit = false): Texture {
   const canvas = createPixelCanvas(TILE_WIDTH, TILE_HEIGHT + 8);
   const ctx = canvas.getContext('2d')!;
 
@@ -22,12 +24,12 @@ export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest
   ctx.closePath();
 
   if (type === 'town_cobble') {
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = TERRAIN.cobble;
     ctx.fill();
 
     // Cobblestone paver pattern
-    ctx.fillStyle = '#475569';
-    ctx.strokeStyle = '#334155';
+    ctx.fillStyle = TERRAIN.cobbleDark;
+    ctx.strokeStyle = TERRAIN.cobbleEdge;
     ctx.lineWidth = 1;
     // Tiny cobblestone blocks
     for (let r = 4; r < TILE_HEIGHT - 4; r += 4) {
@@ -37,24 +39,37 @@ export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest
         }
       }
     }
+    // Lamplight: warm dither spilling onto night cobble near buildings.
+    if (lit) {
+      ctx.fillStyle = TERRAIN.lamplight;
+      ctx.fillRect(28, 12, 3, 2);
+      ctx.fillRect(33, 14, 2, 2);
+      ctx.fillRect(24, 16, 2, 1);
+      ctx.fillRect(36, 10, 2, 1);
+    }
   } else if (type === 'town_wood') {
-    ctx.fillStyle = '#78350f';
+    ctx.fillStyle = TERRAIN.plaza;
     ctx.fill();
-    ctx.strokeStyle = '#451a03';
+    ctx.strokeStyle = TERRAIN.plazaDark;
     ctx.lineWidth = 1;
     ctx.stroke();
     // Wood plank lines
-    ctx.fillStyle = '#92400e';
+    ctx.fillStyle = TERRAIN.plank;
     for (let i = 6; i < TILE_HEIGHT; i += 4) {
       ctx.beginPath();
       ctx.moveTo(10, i);
       ctx.lineTo(TILE_WIDTH - 10, i);
       ctx.stroke();
     }
+    if (lit) {
+      ctx.fillStyle = TERRAIN.lamplight;
+      ctx.fillRect(28, 12, 3, 2);
+      ctx.fillRect(34, 15, 2, 2);
+    }
   } else if (type === 'forest_grass') {
-    ctx.fillStyle = '#166534';
+    ctx.fillStyle = TERRAIN.grass;
     ctx.fill();
-    ctx.fillStyle = '#15803d';
+    ctx.fillStyle = TERRAIN.grassTuft;
     // Grass tufts
     const tufts = [[20, 10], [35, 8], [28, 18], [44, 14], [15, 20]];
     tufts.forEach(([x, y]) => {
@@ -62,47 +77,47 @@ export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest
       ctx.fillRect(x + 1, y - 1, 1, 2);
     });
     // Tiny flowers
-    ctx.fillStyle = '#fde047';
+    ctx.fillStyle = TERRAIN.flowerA;
     ctx.fillRect(22, 14, 2, 2);
-    ctx.fillStyle = '#f43f5e';
+    ctx.fillStyle = TERRAIN.flowerB;
     ctx.fillRect(40, 16, 2, 2);
   } else if (type === 'graveyard_soil') {
-    ctx.fillStyle = '#1e1b4b';
+    ctx.fillStyle = TERRAIN.soil;
     ctx.fill();
-    ctx.fillStyle = '#312e81';
+    ctx.fillStyle = TERRAIN.soilLight;
     ctx.fillRect(24, 12, 4, 3);
     ctx.fillRect(36, 16, 3, 2);
     // Tiny bone fragments
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = TERRAIN.bone;
     ctx.fillRect(20, 18, 3, 1);
     ctx.fillRect(38, 10, 2, 2);
   } else if (type === 'volcanic_rock') {
-    ctx.fillStyle = '#18181b';
+    ctx.fillStyle = TERRAIN.lavaRock;
     ctx.fill();
     // Glowing lava cracks
-    ctx.fillStyle = '#ea580c';
+    ctx.fillStyle = TERRAIN.lava;
     ctx.fillRect(28, 12, 6, 1);
     ctx.fillRect(32, 13, 2, 4);
     ctx.fillRect(30, 17, 8, 1);
-    ctx.fillStyle = '#facc15';
+    ctx.fillStyle = TERRAIN.lavaHot;
     ctx.fillRect(31, 14, 2, 1);
   } else if (type === 'reserve_dark') {
     // Reserved expansion land: very dark slate/indigo placeholder
-    ctx.fillStyle = '#0b0f1e';
+    ctx.fillStyle = TERRAIN.reserve;
     ctx.fill();
     // Faint speckles
-    ctx.fillStyle = '#1b2340';
+    ctx.fillStyle = TERRAIN.reserveSpeck;
     ctx.fillRect(22, 10, 2, 2);
     ctx.fillRect(36, 16, 2, 2);
     ctx.fillRect(28, 20, 2, 1);
-    ctx.fillStyle = '#141b33';
+    ctx.fillStyle = TERRAIN.reserveSpeck2;
     ctx.fillRect(30, 8, 2, 1);
     ctx.fillRect(18, 16, 2, 2);
   } else {
     // stone_road
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = TERRAIN.road;
     ctx.fill();
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = TERRAIN.roadLight;
     ctx.fillRect(20, 8, 8, 4);
     ctx.fillRect(32, 14, 10, 4);
   }
@@ -115,7 +130,7 @@ export function createIsoTileTexture(type: 'town_cobble' | 'town_wood' | 'forest
   // Reserved land keeps a slightly lighter edge on top so reserve
   // borders read at a glance.
   if (type === 'reserve_dark') {
-    ctx.strokeStyle = '#3b476b';
+    ctx.strokeStyle = TERRAIN.reserveEdge;
     ctx.lineWidth = 1;
     ctx.stroke();
   }
