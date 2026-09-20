@@ -51,6 +51,8 @@ import {
   MONSTER_ARCHETYPES,
   monsterLabel as dataMonsterLabel,
   RARITY_STAT_MULT as DATA_RARITY_STAT_MULT,
+  RARE_FLAT_BONUS as DATA_RARE_FLAT_BONUS,
+  statGearBonuses as dataStatGearBonuses,
   GEAR_SELL_MULT as DATA_GEAR_SELL_MULT,
   gearSellPrice as dataGearSellPrice,
   AUCTION_STOCK_CAP as DATA_AUCTION_STOCK_CAP,
@@ -126,6 +128,8 @@ export const baseStatsFor = dataBaseStatsFor;
 
 // Rarity loot + epics + skill-mastery threshold (canonical in ./data/loot, ./data/skills).
 export const RARITY_STAT_MULT = DATA_RARITY_STAT_MULT;
+export const RARE_FLAT_BONUS = DATA_RARE_FLAT_BONUS;
+export const statGearBonuses = dataStatGearBonuses;
 export const GEAR_SELL_MULT = DATA_GEAR_SELL_MULT;
 export const gearSellPrice = dataGearSellPrice;
 export const AUCTION_STOCK_CAP = DATA_AUCTION_STOCK_CAP;
@@ -2596,10 +2600,10 @@ export class GameSimulation {
   }
 
   // --------------------------------------------------------------------------
-  // Rarity loot rolls (Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6).
-  // Bosses: 35% epic (smart loot 70% killer class), else a guaranteed Rare
-  // (blue) — every boss pays at least blue. Normals: Uncommon 40%
-  // (wolf+), Rare 10% (ghoul/drake). Gray kills: no gear roll.
+  // Rarity loot rolls. Bosses: 35% epic (smart loot 70% killer class), else
+  // a guaranteed Rare (blue) at zone tier — crypt+ blues outscore forged
+  // greens (variant B crossover), so endgame hunters prefer blue then epic.
+  // Normals: Uncommon 40% (wolf+), Rare 10% (ghoul/drake). Gray kills: no gear.
   // --------------------------------------------------------------------------
 
   private zoneGearTier(zone: 1 | 2 | 3 | 4): number {
@@ -2615,7 +2619,9 @@ export class GameSimulation {
   }
 
   private buildStatGear(tier: number, rarity: EquipmentRarity, slot: 'weapon' | 'armor', forClass: CharacterClass, monster: Monster): ItemDrop {
-    const mult = RARITY_STAT_MULT[rarity] ?? 1;
+    // Live bonuses come from statGearBonuses (flat for Rare, multiplier
+    // otherwise) so drops and forge reforges always agree.
+    const bonus = dataStatGearBonuses(tier, rarity);
     const noun = slot === 'weapon' ? this.classWeaponNoun(forClass) : this.classArmorNoun(forClass);
     // Base name only — rarity is stored separately and added at display time
     // via equipmentDisplayName(). (Embedding it here caused "Uncommon Uncommon ...".)
@@ -2624,15 +2630,15 @@ export class GameSimulation {
       ? {
           id: `eq-wpn-${forClass}-${tier}-${rarity}-${Date.now().toString(36)}`,
           name, tier, type: 'weapon',
-          atkBonus: Math.round((5 + (tier - 1) * 8) * mult),
+          atkBonus: bonus.atkBonus,
           defBonus: 0, hpBonus: 0, rarity,
         }
       : {
           id: `eq-arm-${forClass}-${tier}-${rarity}-${Date.now().toString(36)}`,
           name, tier, type: 'armor',
           atkBonus: 0,
-          defBonus: Math.round((3 + (tier - 1) * 4) * mult),
-          hpBonus: Math.round((20 + (tier - 1) * 15) * mult),
+          defBonus: bonus.defBonus,
+          hpBonus: bonus.hpBonus,
           rarity,
         };
     return {
@@ -3434,9 +3440,9 @@ export class GameSimulation {
               hunter.gold -= upgradeCost;
               this.takeMaterials(2);
               hunter.weapon.tier += 1;
-              // Rarity-aware reforge: loot keeps its multiplier + effect, only the base moves.
-              const wMult = RARITY_STAT_MULT[hunter.weapon.rarity ?? 'Common'] ?? 1;
-              hunter.weapon.atkBonus = Math.round((5 + (hunter.weapon.tier - 1) * 8) * wMult);
+              // Rarity-aware reforge: loot keeps its rarity curve + effect,
+              // only the base moves (shared helper — forged blue == dropped blue).
+              hunter.weapon.atkBonus = dataStatGearBonuses(hunter.weapon.tier, hunter.weapon.rarity ?? 'Common').atkBonus;
               if ((hunter.weapon.rarity ?? 'Common') === 'Common' || hunter.weapon.name.includes(' Weapon')) {
                 hunter.weapon.name = `${this.getEquipmentPrefix(hunter.weapon.tier)} ${hunter.charClass} Weapon`;
               }
@@ -3458,9 +3464,9 @@ export class GameSimulation {
               hunter.gold -= upgradeCost;
               this.takeMaterials(2);
               hunter.armor.tier += 1;
-              const aMult = RARITY_STAT_MULT[hunter.armor.rarity ?? 'Common'] ?? 1;
-              hunter.armor.defBonus = Math.round((3 + (hunter.armor.tier - 1) * 4) * aMult);
-              hunter.armor.hpBonus = Math.round((20 + (hunter.armor.tier - 1) * 15) * aMult);
+              const armorBonus = dataStatGearBonuses(hunter.armor.tier, hunter.armor.rarity ?? 'Common');
+              hunter.armor.defBonus = armorBonus.defBonus;
+              hunter.armor.hpBonus = armorBonus.hpBonus;
               if ((hunter.armor.rarity ?? 'Common') === 'Common' || hunter.armor.name.includes(' Armor')) {
                 hunter.armor.name = `${this.getEquipmentPrefix(hunter.armor.tier)} ${hunter.charClass} Armor`;
               }

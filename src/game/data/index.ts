@@ -34,6 +34,8 @@ export { MONSTER_ARCHETYPES, monsterLabel } from './monsters';
 export type { MonsterArchetype, MonsterDensity } from './monsters';
 export {
   RARITY_STAT_MULT,
+  RARE_FLAT_BONUS,
+  statGearBonuses,
   GEAR_SELL_MULT,
   gearSellPrice,
   AUCTION_STOCK_CAP,

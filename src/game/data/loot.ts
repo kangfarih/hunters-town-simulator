@@ -7,17 +7,45 @@ import type { CharacterClass, EquipmentEffectId, EquipmentRarity, ZoneId } from 
 export type { EquipmentEffectId, EquipmentRarity };
 
 // --------------------------------------------------------------------------
-// Rarity loot: Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6 on tier base.
+// Rarity loot: Normal x1.0 / Uncommon x1.15 / Epic x1.6 on tier base.
 // Tier base (shop equivalent): weapon 5+(t-1)*8; armor DEF 3+(t-1)*4, HP 20+(t-1)*15.
+// Rare uses FLAT bonuses over base instead of a multiplier (variant B
+// crossover): +25 ATK / +12 DEF +40 HP. Crypt-tier+ blues then outscore
+// forged greens (blue T3 46 > green T5 43) while epic T5 (59) stays king.
 // Uncommon/Rare are stats-only; only Epics carry effectId.
+// Constraint: blue T5 is unreachable (no T5 blue drops, no rarity
+// promotion) — if promotion ever lands, rebalance epic first, since blue
+// T5 would hit 62 ATK over epic's 59.
 // --------------------------------------------------------------------------
 
 export const RARITY_STAT_MULT: Record<EquipmentRarity, number> = {
   Common: 1.0,
   Uncommon: 1.15,
-  Rare: 1.35,
+  Rare: 1.35, // legacy multiplier (kept for sell-price parity); live Rare stats use RARE_FLAT_BONUS
   Epic: 1.6,
 };
+
+/** Flat stat bonuses for Rare gear over the tier base (see above). */
+export const RARE_FLAT_BONUS = { atk: 25, def: 12, hp: 40 };
+
+/** Live stat bonuses for a tier/rarity: flat for Rare, multiplier otherwise.
+ *  Single source of truth for drops AND forge reforges so a forged blue
+ *  matches a dropped blue exactly. */
+export function statGearBonuses(tier: number, rarity: EquipmentRarity): { atkBonus: number; defBonus: number; hpBonus: number } {
+  if (rarity === 'Rare') {
+    return {
+      atkBonus: (5 + (tier - 1) * 8) + RARE_FLAT_BONUS.atk,
+      defBonus: (3 + (tier - 1) * 4) + RARE_FLAT_BONUS.def,
+      hpBonus: (20 + (tier - 1) * 15) + RARE_FLAT_BONUS.hp,
+    };
+  }
+  const mult = RARITY_STAT_MULT[rarity] ?? 1;
+  return {
+    atkBonus: Math.round((5 + (tier - 1) * 8) * mult),
+    defBonus: Math.round((3 + (tier - 1) * 4) * mult),
+    hpBonus: Math.round((20 + (tier - 1) * 15) * mult),
+  };
+}
 
 export const GEAR_SELL_MULT: Record<EquipmentRarity, number> = {
   Common: 1.0,
