@@ -285,6 +285,13 @@ export const WorldConfigMenu: React.FC<WorldConfigMenuProps> = ({
               <AlertTriangle className="w-3.5 h-3.5 text-red-400" /> Danger Zone
             </h4>
             <button
+              onClick={() => { simulation.resetDungeon(); }}
+              className="w-full py-2.5 rounded-xl bg-transparent hover:bg-violet-500/10 border border-violet-400/60 text-violet-200 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer mb-2"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Dungeon ({simulation.dungeon.state}{simulation.dungeon.state === 'active' ? ` ${simulation.dungeon.bossesDown.filter(Boolean).length}/3` : ''})
+            </button>
+            <button
               onClick={() => simulation.resetHunterStats()}
               className="w-full py-2.5 rounded-xl bg-transparent hover:bg-amber-500/10 border border-amber-400/60 text-amber-200 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer mb-2"
             >
