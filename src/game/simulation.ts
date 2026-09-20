@@ -5,14 +5,14 @@ import {
   ActiveZone, ZoneKind, isSupportZone, zoneTickVfx, zoneCastVfx
 } from './types';
 import { gridDistance, getIsometricFacing } from './isometric';
-import { findPath, PathPoint, reserveAt } from './pathfinding';
+import { findPath, PathPoint, reserveAt, isWalkableCell } from './pathfinding';
 import { soundFx } from './audioSynth';
 // Dungeon endgame (phases 1+2): map/instance data lives in ./dungeon;
 // simulation owns entry checks, spawning, and the lockout tick.
 import {
   dungeonAt, BOSS_DEFS, BOSS_ARENAS,
   defaultDungeonInstance, needRoll, dungeonBossIndex,
-  DUNGEON_LOCKOUT_SECONDS, DUNGEON_EJECT,
+  DUNGEON_LOCKOUT_SECONDS, DUNGEON_EJECT, DUNGEON_EXIT,
   DUNGEON_CLEAR_BONUS_GOLD,
   DUNGEON_PORTAL, DUNGEON_STAGING, LOBBY_SEATS,
   lobbySeatFits, lobbySeatPositions,
@@ -497,8 +497,12 @@ export class GameSimulation {
     // 0. Reroute motivated solo field hunters to the plaza muster.
     // Motivation is snapshotted for all seekers BEFORE rerouting, so the
     // first departure can't un-crowd the zone for the rest of the pack.
+    // Vault delvers never muster: the gate is sealed and walls are solid,
+    // so a plaza reroute would march them at stone for 12s. Shed parties
+    // (knockdown warp-outs) hold their boss via holdDelver instead.
     const seekers = this.hunters.filter(h =>
-      h.partyId == null && (h.state === 'HUNTING' || h.state === 'FIGHTING' || h.state === 'TRAVELING_TO_HUNT'));
+      h.partyId == null && (h.state === 'HUNTING' || h.state === 'FIGHTING' || h.state === 'TRAVELING_TO_HUNT') &&
+      this.zoneOf(h.gx, h.gy) !== 4);
     const motivated = seekers.filter(h => (h.lfpCooldown ?? 0) <= 0 && (this.isCrowdedFor(h) || this.isAmbitiousFor(h)));
     for (const s of motivated) {
       if (gridDistance(s.gx, s.gy, 29, 29) < 1.5) continue; // already at plaza
@@ -1015,7 +1019,7 @@ export class GameSimulation {
       this.updateHunterAI(this.hunters[i], effectiveDt);
     }
 
-    // 3a. Portal lobby: a full house of role-fitting seat-holders descends.
+    // 3a. Portal lobby: a full house of seated hunters descends.
     this.tickLobbyTeleport();
 
     // 3b. Update skill zones (T2): ticks after hunters move, before monsters act.
@@ -1041,8 +1045,13 @@ export class GameSimulation {
           if (d < 1e-6) { nx = (a.id < b.id ? -1 : 1); ny = 0; dist = 0; }
           else { nx = dx / d; ny = dy / d; dist = d; }
           const push = Math.min((R - dist) / 2, CAP);
-          a.gx -= nx * push; a.gy -= ny * push;
-          b.gx += nx * push; b.gy += ny * push;
+          // Solid walls: separation never shoves hunters into stone (a
+          // wall-straddling hunter would trip the wallClip escape rule and
+          // walk free — the phase-through exploit).
+          const na = this.wallClip(a.gx, a.gy, a.gx - nx * push, a.gy - ny * push);
+          a.gx = na.x; a.gy = na.y;
+          const nb = this.wallClip(b.gx, b.gy, b.gx + nx * push, b.gy + ny * push);
+          b.gx = nb.x; b.gy = nb.y;
         }
       }
     }
@@ -1232,11 +1241,8 @@ export class GameSimulation {
   }
 
   /**
-   * Claim the first free seat whose role fits the hunter's class (tank
-   * seat → Paladin/Berserker, heal seat → Cleric, any seats → anyone; one
-   * seat per hunter). Returns the seat index, or null when nothing fits —
-   * e.g. a roster with no tank class leaves the tank seat empty by design
-   * (no crash; the party just never fills).
+   * Claim the first free seat (all seats open — any class fits; one seat
+   * per hunter). Returns the seat index, or null when the lobby is full.
    */
   private claimLobbySeat(hunter: Hunter): number | null {
     const existing = this.lobbySeatOf(hunter.id);
@@ -1253,10 +1259,10 @@ export class GameSimulation {
 
   /**
    * Portal-lobby full-house check (tick, after the hunter loop): when all
-   * 5 seats are held by live role-fitting DUNGEON_LOBBY hunters, form them
-   * into a party (leader = highest level) and admit via tryEnterDungeon —
-   * teleporting to the dungeon staging ONLY on admit. A refusal dissolves
-   * the just-formed party and leaves everyone seated (DON'T teleport).
+   * 5 seats are held by live DUNGEON_LOBBY hunters, form them into a party
+   * (leader = highest level) and admit via tryEnterDungeon — teleporting
+   * to the dungeon staging ONLY on admit. A refusal dissolves the
+   * just-formed party and leaves everyone seated (DON'T teleport).
    */
   private tickLobbyTeleport() {
     if (!this.agentConfig.partiesEnabled) return;
@@ -1300,6 +1306,7 @@ export class GameSimulation {
         h.targetGy = DUNGEON_STAGING.y;
       }
       h.state = 'HUNTING';
+      h.stateTimer = 0; // drop the leftover lobby wait budget (swing gate)
     });
     this.addFloatingText('🌀 The party descends!', DUNGEON_STAGING.x, DUNGEON_STAGING.y, '#c4b5fd', 16);
   }
@@ -1330,7 +1337,30 @@ export class GameSimulation {
     hunter.targetGx = best.gx;
     hunter.targetGy = best.gy;
     hunter.state = 'HUNTING';
+    hunter.stateTimer = 0; // no stale wait budgets ride into the run
     return true;
+  }
+
+  /**
+   * Dungeon exit portal: while the run is NOT live (cleared / lockout /
+   * dormant), any hunter still standing in the vault walks to DUNGEON_EXIT
+   * and warps to the town plaza (WANDERING_TOWN fans out into errands via
+   * the hub, same as the wipe eject). This is the only way out — the
+   * walk-in gate is sealed and walls are solid — so without it cleared
+   * delvers would march home straight through the west palisade.
+   * Party membership is left alone (town states dissolve it next tick).
+   */
+  private updateDungeonExit(hunter: Hunter, dt: number) {
+    const arrived = this.moveTowards(hunter, DUNGEON_EXIT.x, DUNGEON_EXIT.y, this.effectiveMoveSpeed(hunter) * 60 * dt)
+      || gridDistance(hunter.gx, hunter.gy, DUNGEON_EXIT.x, DUNGEON_EXIT.y) < 0.8;
+    if (!arrived) return;
+    hunter.gx = DUNGEON_EJECT.x;
+    hunter.gy = DUNGEON_EJECT.y;
+    hunter.targetMonsterId = null;
+    hunter.targetBuildingId = null;
+    hunter.state = 'WANDERING_TOWN';
+    hunter.stateTimer = 1.5;
+    this.addFloatingText('🌀 Portal home!', DUNGEON_EJECT.x, DUNGEON_EJECT.y, '#fbbf24', 12);
   }
 
   /**
@@ -1475,9 +1505,14 @@ export class GameSimulation {
         if (leader && leader.targetMonsterId) {
           const prey = this.monsters.find(m => m.id === leader.targetMonsterId);
           if (prey && prey.hp > 0) {
-            hunter.targetMonsterId = prey.id;
-            hunter.targetGx = prey.gx;
-            hunter.targetGy = prey.gy;
+            // Exile guard: never adopt a target across the map. Parties
+            // fight shoulder-to-shoulder; a distant leader pick keeps the
+            // member's own target instead of marching it past live prey.
+            if (gridDistance(hunter.gx, hunter.gy, prey.gx, prey.gy) <= 12) {
+              hunter.targetMonsterId = prey.id;
+              hunter.targetGx = prey.gx;
+              hunter.targetGy = prey.gy;
+            }
           }
         }
       }
@@ -1488,6 +1523,14 @@ export class GameSimulation {
       if (hunter.attackAnimTimer <= 0) {
         hunter.isAttacking = false;
       }
+    }
+
+    // Dungeon exit portal (above all states): a hunter standing in the
+    // vault while its run is over walks out and warps home. Catches every
+    // state, so post-clear errand routing can never march through the wall.
+    if (this.zoneOf(hunter.gx, hunter.gy) === 4 && this.dungeon.state !== 'active') {
+      this.updateDungeonExit(hunter, dt);
+      return;
     }
 
     // Hunter State Machine
@@ -1547,9 +1590,14 @@ export class GameSimulation {
             hunter.targetGx = desperate.gx;
             hunter.targetGy = desperate.gy;
           } else {
-            // Wander in field
-            hunter.targetGx = 44 + Math.random() * 8;
-            hunter.targetGy = 28 + Math.random() * 8;
+            // Wander in field (vault-local for delvers — never at the wall).
+            if (this.zoneOf(hunter.gx, hunter.gy) === 4) {
+              hunter.targetGx = 2 + Math.random() * 15;
+              hunter.targetGy = 24 + Math.random() * 31;
+            } else {
+              hunter.targetGx = 44 + Math.random() * 8;
+              hunter.targetGy = 28 + Math.random() * 8;
+            }
           }
         }
         break;
@@ -1558,16 +1606,24 @@ export class GameSimulation {
       case 'HUNTING': {
         // Check health first - if critical, auto retreat to town clinic!
         // (Paladin tanks hold the line to 15% before bailing.)
+        // Vault hold: no clinic retreats mid-run (sealed gate + solid
+        // walls = no path out) — elixirs, party rescue, and wipe-eject
+        // cover survival. Falls through to normal hunting logic.
         if (hunter.hp < this.effectiveMaxHp(hunter) * this.retreatHpFracFor(hunter)) {
-          this.retreatToTown(hunter, 'low HP');
-          break;
+          if (this.zoneOf(hunter.gx, hunter.gy) !== 4) {
+            this.retreatToTown(hunter, 'low HP');
+            break;
+          }
         }
 
         // Full bags first: sell before anything else so one town trip
-        // covers every errand (repairs, drinks, brews, training)
+        // covers every errand (repairs, drinks, brews, training).
+        // Vault hold: loot rides in bags until extraction (holdDelver).
         if (hunter.inventory.length >= hunter.maxInventorySlots) {
-          this.returnToTownToSell(hunter);
-          break;
+          if (this.zoneOf(hunter.gx, hunter.gy) !== 4) {
+            this.returnToTownToSell(hunter);
+            break;
+          }
         }
 
         // Outgrown zone: transit to town only when SETTLING for local prey —
@@ -1605,9 +1661,15 @@ export class GameSimulation {
             }
             monster = this.findDesperateTarget(hunter);
             if (!monster) {
-              // Field truly empty: idle wander
-              hunter.targetGx = 42 + Math.random() * 10;
-              hunter.targetGy = 26 + Math.random() * 10;
+              // Field truly empty: idle wander (vault-local for delvers —
+              // forest coordinates would march them at the sealed wall).
+              if (this.zoneOf(hunter.gx, hunter.gy) === 4) {
+                hunter.targetGx = 2 + Math.random() * 15;
+                hunter.targetGy = 24 + Math.random() * 31;
+              } else {
+                hunter.targetGx = 42 + Math.random() * 10;
+                hunter.targetGy = 26 + Math.random() * 10;
+              }
               this.moveTowards(hunter, hunter.targetGx, hunter.targetGy, this.effectiveMoveSpeed(hunter) * 40 * dt); // Whirl slow:
               break;
             }
@@ -1621,6 +1683,11 @@ export class GameSimulation {
 
         if (dist <= attackRange) {
           hunter.state = 'FIGHTING';
+          // Fresh swing timer: stateTimer is reused across states (lobby 90s
+          // budget, LFP 12s, town waits) and the attack gate burns it down
+          // in silence — without this, delvers who waited in the lobby open
+          // a dungeon run with up to 90s of damage-free swings.
+          hunter.stateTimer = 0;
         } else {
           this.moveTowards(hunter, monster.gx, monster.gy, this.effectiveMoveSpeed(hunter) * 60 * dt); // Whirl slow:
         }
@@ -1825,11 +1892,10 @@ export class GameSimulation {
 
       case 'DUNGEON_LOBBY': {
         // Town portal lobby: walk to the violet portal, claim the first
-        // role-fitting seat on arrival (tank → Paladin/Berserker, heal →
-        // Cleric, any → anyone; one seat per hunter), then sit out the 90s
-        // wait budget. A full house teleports via tickLobbyTeleport; on
-        // expiry march out SOLO and start the 120s re-queue cooldown
-        // (re-uses the LFP cooldown field — no new fields).
+        // free seat on arrival (all seats open — any class), then sit out
+        // the 90s wait budget. A full house teleports via
+        // tickLobbyTeleport; on expiry march out SOLO and start the 120s
+        // re-queue cooldown (re-uses the LFP cooldown field — no new fields).
         const seats = lobbySeatPositions();
         let entry = this.lobbySeatOf(hunter.id);
         const dest = entry ? seats[entry.seatIndex]! : DUNGEON_PORTAL;
@@ -3179,6 +3245,15 @@ export class GameSimulation {
       hunter.targetGy = desperate.gy;
       return;
     }
+    // Vault hold: no prey at all inside — wander the interior, never march
+    // out through the sealed wall (extraction runs via the exit portal).
+    if (this.zoneOf(hunter.gx, hunter.gy) === 4) {
+      hunter.targetMonsterId = null;
+      hunter.state = 'HUNTING';
+      hunter.targetGx = 2 + Math.random() * 15;
+      hunter.targetGy = 24 + Math.random() * 31;
+      return;
+    }
     this.marchOutToHunt(hunter);
   }
 
@@ -4094,7 +4169,15 @@ export class GameSimulation {
         let claimants = 0;
         if (!ignoreClaims) {
           for (const h of this.hunters) {
-            if (h.id !== hunter.id && h.targetMonsterId === m.id) claimants++;
+            if (h.id !== hunter.id && h.targetMonsterId === m.id) {
+              // Party focus fire: packmates converging on shared prey exert
+              // no spread pressure — the uncapped ×0.6 pile-up once exiled
+              // the 5th delver onto a far boss (then party-follow dragged
+              // the whole party past its boss, doing nothing). Solo hunters
+              // still spread off everyone (partyId null never matches).
+              if (h.partyId && h.partyId === hunter.partyId) continue;
+              claimants++;
+            }
           }
         }
         const isGoalBoss = bossFocus && m.isBoss && m.zone !== 4;
@@ -4111,6 +4194,16 @@ export class GameSimulation {
 
     const candidates = this.monsters.filter(m => m.zone === preferredZone && m.hp > 0);
     const fairInZone = candidates.filter(m => !this.isTooHardFor(m, hunter));
+    // Vault lock: delvers inside the dungeon ONLY ever see interior prey.
+    // Without this a delver whose boss reads too-hard solo-lens would be
+    // handed a volcano target across the sealed wall — and with solid-wall
+    // collision that means pushing stone forever instead of phasing (both
+    // bad; the right answer is hold/wander inside until extraction).
+    const inVault = this.zoneOf(hunter.gx, hunter.gy) === 4;
+    if (inVault) {
+      const inside = this.monsters.filter(m => m.zone === 4 && m.hp > 0 && !this.isTooHardFor(m, hunter));
+      return nearestIn(inside); // null when empty (empty list → no pick)
+    }
     // Boss-goal cross-zone pull: focused hunters also weigh live field
     // bosses anywhere (forest/crypt/volcano), so a capped volcano group
     // detours for a Revenant/Thornmother instead of grinding gray trash.
@@ -4126,15 +4219,9 @@ export class GameSimulation {
     if (fairInZone.length > 0) return nearestIn(fairInZone);
 
     // Fallback to the best-matched fair fight anywhere (refuse suicide runs).
-    // Zone-4 dungeon mobs are excluded for hunters outside the vault — entry
-    // is teleport-only, so no one may route themselves at the sealed wall.
-    // Delvers already inside keep full access and prefer interior prey.
-    const inDungeon = this.zoneOf(hunter.gx, hunter.gy) === 4;
-    if (inDungeon) {
-      const inside = this.monsters.filter(m => m.zone === 4 && m.hp > 0 && !this.isTooHardFor(m, hunter));
-      if (inside.length > 0) return nearestIn(inside);
-    }
-    const anyFair = this.monsters.filter(m => m.hp > 0 && !this.isTooHardFor(m, hunter) && (inDungeon || m.zone !== 4));
+    // Vault hunters returned above; outsiders never route at vault mobs —
+    // entry is teleport-only, so no one may target across the sealed wall.
+    const anyFair = this.monsters.filter(m => m.hp > 0 && !this.isTooHardFor(m, hunter) && m.zone !== 4);
     return anyFair.length > 0 ? nearestIn(anyFair) : null;
   }
 
@@ -4149,8 +4236,10 @@ export class GameSimulation {
     const inDungeon = this.zoneOf(hunter.gx, hunter.gy) === 4;
     for (const m of this.monsters) {
       if (m.hp <= 0) continue;
-      // Teleport-only entry: outsiders never desperation-pick vault mobs.
+      // Teleport-only entry: outsiders never desperation-pick vault mobs,
+      // and delvers never desperation-pick OUT (solid walls — no path).
       if (m.zone === 4 && !inDungeon) continue;
+      if (m.zone !== 4 && inDungeon) continue;
       const estHit = m.atk - this.effectiveDef(hunter) * 0.65; // TTK tune: 0.5->0.65
       const hitsToDie = estHit <= 0 ? 999 : hunter.hp / estHit; // hits-to-die
       // Spread hunters across prey: discount already-claimed monsters so
@@ -4213,12 +4302,36 @@ export class GameSimulation {
     return { dx: sx / len, dy: sy / len };
   }
 
+  /**
+   * Solid walls: step a position toward (nx, ny), never ENTERING a wall
+   * cell from walkable ground. Slides along the wall when exactly one
+   * axis stays walkable; holds position when fully blocked. Entities
+   * already inside a wall cell (legacy saves, separation jitter) may
+   * always move — escape, never freeze. A* already routes around walls;
+   * this catches straight-steering fallbacks across sealed runs (e.g.
+   * the dungeon palisade), which used to phase hunters through stone.
+   * Returns the resolved position + whether any motion happened.
+   */
+  private wallClip(gx: number, gy: number, nx: number, ny: number): { x: number; y: number; moved: boolean } {
+    const destBlocked = !isWalkableCell(Math.floor(nx), Math.floor(ny));
+    if (!destBlocked) return { x: nx, y: ny, moved: true };
+    if (!isWalkableCell(Math.floor(gx), Math.floor(gy))) return { x: nx, y: ny, moved: true }; // escape
+    const xOk = isWalkableCell(Math.floor(nx), Math.floor(gy));
+    const yOk = isWalkableCell(Math.floor(gx), Math.floor(ny));
+    if (xOk) return { x: nx, y: gy, moved: nx !== gx };
+    if (yOk) return { x: gx, y: ny, moved: ny !== gy };
+    return { x: gx, y: gy, moved: false };
+  }
+
   private moveTowards(hunter: Hunter, targetX: number, targetY: number, speed: number): boolean {
     const dx = targetX - hunter.gx;
     const dy = targetY - hunter.gy;
     const dist = Math.hypot(dx, dy);
 
     if (dist <= speed || dist < 0.1) {
+      // Arrival snap must respect solid walls too (no phasing on overshoot).
+      if (!isWalkableCell(Math.floor(targetX), Math.floor(targetY)) &&
+          isWalkableCell(Math.floor(hunter.gx), Math.floor(hunter.gy))) return false;
       hunter.gx = targetX;
       hunter.gy = targetY;
       return true;
@@ -4226,8 +4339,9 @@ export class GameSimulation {
 
     const step = this.steeringStep(hunter.id, hunter.gx, hunter.gy, targetX, targetY);
     hunter.facing = getIsometricFacing(hunter.gx, hunter.gy, hunter.gx + step.dx, hunter.gy + step.dy);
-    hunter.gx += step.dx * speed;
-    hunter.gy += step.dy * speed;
+    const next = this.wallClip(hunter.gx, hunter.gy, hunter.gx + step.dx * speed, hunter.gy + step.dy * speed);
+    hunter.gx = next.x;
+    hunter.gy = next.y;
     return false;
   }
 
@@ -4237,6 +4351,8 @@ export class GameSimulation {
     const dist = Math.hypot(dx, dy);
 
     if (dist <= speed || dist < 0.1) {
+      if (!isWalkableCell(Math.floor(targetX), Math.floor(targetY)) &&
+          isWalkableCell(Math.floor(monster.gx), Math.floor(monster.gy))) return false;
       monster.gx = targetX;
       monster.gy = targetY;
       return true;
@@ -4244,8 +4360,9 @@ export class GameSimulation {
 
     const step = this.steeringStep(monster.id, monster.gx, monster.gy, targetX, targetY);
     monster.facing = step.dx >= 0 ? 'SE' : 'SW';
-    monster.gx += step.dx * speed;
-    monster.gy += step.dy * speed;
+    const next = this.wallClip(monster.gx, monster.gy, monster.gx + step.dx * speed, monster.gy + step.dy * speed);
+    monster.gx = next.x;
+    monster.gy = next.y;
     return false;
   }
 

@@ -4,7 +4,7 @@
 import { Container, Sprite, Graphics, Text, TextStyle, Texture } from 'pixi.js';
 import { gridToScreen, MAP_GRID_WIDTH, MAP_GRID_HEIGHT } from '../isometric';
 import { reserveAt, RESERVE_REGIONS, WALL_CELLS, isHubCell } from '../pathfinding';
-import { dungeonAt, BOSS_ARENAS, DUNGEON_PORTAL, lobbySeatPositions } from '../dungeon';
+import { dungeonAt, BOSS_ARENAS, DUNGEON_PORTAL, DUNGEON_EXIT, lobbySeatPositions } from '../dungeon';
 import { SUMMON_PORTAL_POS } from '../simulation';
 import { createIsoTileTexture } from '../textures/tiles';
 import { createChairTexture } from '../objects/chair';
@@ -106,6 +106,16 @@ export class TerrainLayer {
       chair.zIndex = (seat.x + seat.y) * 100 + 12;
       container.addChild(chair);
     }
+
+    // Dungeon exit portal: amber/gold twin of the violet entry portal, on
+    // the interior DUNGEON_EXIT tile. Delvers walk here once the run ends
+    // (cleared/lockout/dormant) and warp back to the town plaza.
+    const exitGfx = new Graphics();
+    const exitPos = gridToScreen(DUNGEON_EXIT.x, DUNGEON_EXIT.y);
+    exitGfx.circle(exitPos.x, exitPos.y + 16, 24).fill({ color: 0xf59e0b, alpha: 0.35 });
+    exitGfx.circle(exitPos.x, exitPos.y + 16, 16).fill({ color: 0xfbbf24, alpha: 0.5 });
+    exitGfx.circle(exitPos.x, exitPos.y + 16, 8).fill({ color: 0xfef3c7, alpha: 0.8 });
+    container.addChild(exitGfx);
 
     // Faint labels at each reserved region's center tile
     const reserveNumerals = ['I', 'II', 'III', 'IV', 'V'];

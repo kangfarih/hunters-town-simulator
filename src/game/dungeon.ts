@@ -8,7 +8,7 @@
 //
 // ENTRY WIRING (portal lobby): Simulation.evaluateTownNeeds routes idle
 // Lv.15 hunters to the town portal (DUNGEON_PORTAL) instead of the field.
-// They wait in DUNGEON_LOBBY on role-locked chairs (LOBBY_SEATS); when all
+// They wait in DUNGEON_LOBBY on open chairs (LOBBY_SEATS, all 'any'); when
 // 5 seats fill, the sim forms a party and admits it via tryEnterDungeon,
 // then teleports the delvers to DUNGEON_STAGING. The old crypt-side
 // walk-in gate (DUNGEON_GATE) is SEALED — solid wall, entry teleport-only.
@@ -53,23 +53,32 @@ export const DUNGEON_PORTAL = { x: 33, y: 22 };
  */
 export const DUNGEON_STAGING = { x: 10, y: 22 };
 
-/** Lobby chair role locks: 1 tank, 1 healer, 3 open. */
+/**
+ * Dungeon exit portal: the way back out (the walk-in gate is sealed and
+ * walls are solid, so this teleport is the only exit). Interior tile a
+ * step east of staging, walkable open ground. Hunters standing in the
+ * vault while the run is NOT live (cleared/lockout/dormant) walk here
+ * and warp to DUNGEON_EJECT.
+ */
+export const DUNGEON_EXIT = { x: 13, y: 22 };
+
+/** Lobby chair role locks: all seats open — any 5 max-level hunters may
+ *  descend (no tank/healer requirement). Roles stay in the type so a
+ *  future hard-mode gate can re-lock seats without touching callers. */
 export type LobbySeatRole = 'tank' | 'heal' | 'any';
 export interface LobbySeat { role: LobbySeatRole; }
 export const LOBBY_SEATS: LobbySeat[] = [
-  { role: 'tank' },
-  { role: 'heal' },
+  { role: 'any' },
+  { role: 'any' },
   { role: 'any' },
   { role: 'any' },
   { role: 'any' },
 ];
 
 /**
- * Lobby role eligibility: tank seat → Paladin/Berserker, heal seat →
- * Cleric, any seats → anyone. Strict Paladin-only tanking risks the tank
- * seat never filling on Paladin-less rosters; the Berserker is the melee
- * off-tank, so it qualifies. A roster with neither still leaves the tank
- * seat empty by design (documented, no crash — the party just waits).
+ * Lobby role eligibility (open gate: every seat is 'any', so anyone fits).
+ * Kept for a future hard-mode gate — tank seat → Paladin/Berserker, heal
+ * seat → Cleric — without touching callers.
  */
 export function lobbySeatFits(role: LobbySeatRole, charClass: CharacterClass): boolean {
   if (role === 'any') return true;
