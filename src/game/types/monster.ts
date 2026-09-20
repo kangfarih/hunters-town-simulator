@@ -4,7 +4,7 @@ export interface Monster {
   id: string;
   name: string;
   zone: 1 | 2 | 3 | 4;
-  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_lich' | 'boss_warden' | 'boss_hoarder' | 'boss_primus';
+  type: 'slime' | 'goblin' | 'wolf' | 'skeleton' | 'ghoul' | 'wight' | 'drake' | 'golem' | 'boss_thorn' | 'boss_revenant' | 'boss_lich' | 'boss_warden' | 'boss_hoarder' | 'boss_primus';
   level: number;
   hp: number;
   maxHp: number;

@@ -8,9 +8,11 @@ import { buildingCapacity, serviceTime } from '../game/simulation';
 import {
   AUCTION_STOCK_CAP,
   AUCTION_MAX_COPIES_PER_ITEM,
+  AUCTION_SHELF_CAP,
   auctionItemKey,
   auctionBuyoutPrice,
   auctionBuyerPrice,
+  auctionShelfCount,
   RARITY_TEXT_CLASS,
   RARITY_BORDER_CLASS,
   equipmentDisplayName,
@@ -71,6 +73,50 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
       return b.length - a.length;
     });
   })();
+  // Single-category shelves: all blues under one Rare header, all greens
+  // under one Uncommon header (mirrors the reserved sim shelves).
+  const rareGroups = auctionGroups.filter(g => (g[0].rarity ?? 'Common') === 'Rare');
+  const uncommonGroups = auctionGroups.filter(g => (g[0].rarity ?? 'Common') === 'Uncommon');
+
+  const renderAuctionGroup = (group: Equipment[]) => {
+    const item = group[0];
+    const buyout = auctionBuyoutPrice(item.tier, item.rarity, building.level);
+    const buyer = auctionBuyerPrice(buyout, item.tier);
+    return (
+      <div
+        key={auctionItemKey(item)}
+        className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-slate-900/60 border ${RARITY_BORDER_CLASS[item.rarity] ?? 'border-slate-700/60'}`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`${RARITY_TEXT_CLASS[item.rarity] ?? 'text-slate-200'}`}>●</span>
+          <span className="text-sm">{item.type === 'weapon' ? '⚔️' : '🛡️'}</span>
+          <div className="min-w-0">
+            <div className={`truncate font-bold text-[11px] ${RARITY_TEXT_CLASS[item.rarity] ?? 'text-slate-200'}`}>
+              {equipmentDisplayName(item.rarity, item.name)}
+            </div>
+            <div className="text-[10px] text-slate-400 font-mono">
+              {item.type === 'weapon'
+                ? `ATK +${item.atkBonus}`
+                : `DEF +${item.defBonus} HP +${item.hpBonus}`}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-0.5 shrink-0">
+          <div className="flex items-center gap-1">
+            <span className="px-1.5 py-px rounded bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-300">
+              T{item.tier}
+            </span>
+            <span className="px-1.5 py-px rounded bg-blue-950/60 border border-blue-500/40 text-[10px] font-mono font-bold text-blue-300">
+              ×{group.length}/{AUCTION_MAX_COPIES_PER_ITEM}
+            </span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-400">
+            {buyout.toLocaleString()}g → <span className="text-amber-300 font-bold">{buyer.toLocaleString()}g</span>
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="absolute right-3 top-20 bottom-3 w-84 max-w-[calc(100vw-24px)] z-20 flex flex-col bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl shadow-black/60 overflow-hidden text-slate-200 pointer-events-auto font-sans">
@@ -224,6 +270,14 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
                 {auctionStock.length}/{AUCTION_STOCK_CAP} · {auctionGroups.length} unique
               </span>
             </div>
+            <div className="flex items-center gap-3 font-mono text-[10px]">
+              <span className="text-emerald-400 font-bold">
+                🟢 Green {auctionShelfCount(auctionStock, 'Uncommon')}/{AUCTION_SHELF_CAP.Uncommon}
+              </span>
+              <span className="text-blue-400 font-bold">
+                🔵 Blue {auctionShelfCount(auctionStock, 'Rare')}/{AUCTION_SHELF_CAP.Rare}
+              </span>
+            </div>
             <div className="flex items-center gap-3 font-mono text-[10px] text-slate-400">
               <span>Listings <span className="text-slate-200 font-bold">{auctionLifetimeListings}</span></span>
               <span>Sales <span className="text-slate-200 font-bold">{auctionLifetimeSales}</span></span>
@@ -234,46 +288,31 @@ export const BuildingInspector: React.FC<BuildingInspectorProps> = ({
                 No listings — hunters will consign green/blue drops here.
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {auctionGroups.map(group => {
-                  const item = group[0];
-                  const buyout = auctionBuyoutPrice(item.tier, item.rarity, building.level);
-                  const buyer = auctionBuyerPrice(buyout, item.tier);
-                  return (
-                    <div
-                      key={auctionItemKey(item)}
-                      className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-slate-900/60 border ${RARITY_BORDER_CLASS[item.rarity] ?? 'border-slate-700/60'}`}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={`${RARITY_TEXT_CLASS[item.rarity] ?? 'text-slate-200'}`}>●</span>
-                        <span className="text-sm">{item.type === 'weapon' ? '⚔️' : '🛡️'}</span>
-                        <div className="min-w-0">
-                          <div className={`truncate font-bold text-[11px] ${RARITY_TEXT_CLASS[item.rarity] ?? 'text-slate-200'}`}>
-                            {equipmentDisplayName(item.rarity, item.name)}
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            {item.type === 'weapon'
-                              ? `ATK +${item.atkBonus}`
-                              : `DEF +${item.defBonus} HP +${item.hpBonus}`}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-0.5 shrink-0">
-                        <div className="flex items-center gap-1">
-                          <span className="px-1.5 py-px rounded bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-300">
-                            T{item.tier}
-                          </span>
-                          <span className="px-1.5 py-px rounded bg-blue-950/60 border border-blue-500/40 text-[10px] font-mono font-bold text-blue-300">
-                            ×{group.length}/{AUCTION_MAX_COPIES_PER_ITEM}
-                          </span>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-400">
-                          {buyout.toLocaleString()}g → <span className="text-amber-300 font-bold">{buyer.toLocaleString()}g</span>
-                        </span>
-                      </div>
+              <div className="space-y-2.5">
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
+                    🔵 Rare — Blue ({rareGroups.reduce((n, g) => n + g.length, 0)} listed)
+                  </div>
+                  {rareGroups.length === 0 ? (
+                    <div className="p-2 rounded-lg bg-slate-900/60 border border-dashed border-blue-900/60 text-center text-slate-500 text-[11px]">
+                      Blue shelf empty — ghoul/drake hunters, bring blues home.
                     </div>
-                  );
-                })}
+                  ) : (
+                    rareGroups.map(renderAuctionGroup)
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                    🟢 Uncommon — Green ({uncommonGroups.reduce((n, g) => n + g.length, 0)} listed)
+                  </div>
+                  {uncommonGroups.length === 0 ? (
+                    <div className="p-2 rounded-lg bg-slate-900/60 border border-dashed border-emerald-900/60 text-center text-slate-500 text-[11px]">
+                      Green shelf empty.
+                    </div>
+                  ) : (
+                    uncommonGroups.map(renderAuctionGroup)
+                  )}
+                </div>
               </div>
             )}
           </div>

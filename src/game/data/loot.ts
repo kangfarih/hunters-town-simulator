@@ -33,11 +33,39 @@ export function gearSellPrice(tier: number, rarity: EquipmentRarity): number {
 // --------------------------------------------------------------------------
 // Auction House v1 (Merchant Bazaar extension): instant buyout pool for
 // green/blue (Uncommon/Rare) weapon/armor only. Sellers get an instant
-// buyout; buyers pay a 25% markup + tier fee. Stock is FIFO-capped.
+// buyout; buyers pay a 25% markup + tier fee.
+//
+// Reserved shelves per rarity: green floods (40% drop rate) can never
+// evict blues (10% on ghoul/drake only). Each shelf evicts FIFO within
+// itself when full — a full green shelf salvages the oldest green, the
+// blue shelf is untouched. Total stock stays 24 (12 + 12).
 // --------------------------------------------------------------------------
 
 export const AUCTION_STOCK_CAP = 24;
 export const AUCTION_MAX_COPIES_PER_ITEM = 3;
+
+/** Reserved slots per auctionable rarity (Uncommon = green, Rare = blue). */
+export const AUCTION_SHELF_CAP: Record<'Uncommon' | 'Rare', number> = {
+  Uncommon: 12,
+  Rare: 12,
+};
+
+/** Shelf cap for a rarity (non-auctionable rarities hold nothing: 0). */
+export function auctionShelfCap(rarity: EquipmentRarity | undefined | null): number {
+  if (rarity === 'Uncommon' || rarity === 'Rare') return AUCTION_SHELF_CAP[rarity];
+  return 0;
+}
+
+/** Live count of a rarity on its shelf. */
+export function auctionShelfCount(
+  stock: { rarity?: EquipmentRarity | null }[],
+  rarity: EquipmentRarity | undefined | null,
+): number {
+  if (rarity !== 'Uncommon' && rarity !== 'Rare') return 0;
+  let n = 0;
+  for (const s of stock) if ((s.rarity ?? 'Common') === rarity) n++;
+  return n;
+}
 
 export function isAuctionable(equipment: { rarity?: EquipmentRarity | null; type?: string | null } | null | undefined): boolean {
   if (!equipment) return false;

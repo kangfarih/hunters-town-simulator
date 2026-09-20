@@ -55,6 +55,9 @@ import {
   gearSellPrice as dataGearSellPrice,
   AUCTION_STOCK_CAP as DATA_AUCTION_STOCK_CAP,
   AUCTION_MAX_COPIES_PER_ITEM as DATA_AUCTION_MAX_COPIES_PER_ITEM,
+  AUCTION_SHELF_CAP as DATA_AUCTION_SHELF_CAP,
+  auctionShelfCap as dataAuctionShelfCap,
+  auctionShelfCount as dataAuctionShelfCount,
   auctionItemKey as dataAuctionItemKey,
   isAuctionable as dataIsAuctionable,
   auctionBuyoutPrice as dataAuctionBuyoutPrice,
@@ -124,6 +127,9 @@ export const GEAR_SELL_MULT = DATA_GEAR_SELL_MULT;
 export const gearSellPrice = dataGearSellPrice;
 export const AUCTION_STOCK_CAP = DATA_AUCTION_STOCK_CAP;
 export const AUCTION_MAX_COPIES_PER_ITEM = DATA_AUCTION_MAX_COPIES_PER_ITEM;
+export const AUCTION_SHELF_CAP = DATA_AUCTION_SHELF_CAP;
+export const auctionShelfCap = dataAuctionShelfCap;
+export const auctionShelfCount = dataAuctionShelfCount;
 export const auctionItemKey = dataAuctionItemKey;
 export const isAuctionable = dataIsAuctionable;
 export const auctionBuyoutPrice = dataAuctionBuyoutPrice;
@@ -224,8 +230,10 @@ export class GameSimulation {
   public speedMultiplier: number = 1;
   public isPaused: boolean = false;
 
-  // Boss Spawn Timer
-  public bossSpawnTimer: number = 90; // Spawns an Evil Lich every 90 seconds
+  // Boss Spawn Timer (region bosses, one per field zone — see spawnBoss).
+  // Interval scales with the capped share of the roster so a max-level
+  // town feels the wilds push back harder.
+  public bossSpawnTimer: number = 90;
   public isBossActive: boolean = false;
 
   // Dungeon instance (phase 2): mobs live in the normal monsters array
@@ -908,11 +916,17 @@ export class GameSimulation {
       this.summonHero();
     }
 
-    // 2. Boss Spawn Countdown
+    // 2. Boss Spawn Countdown (region bosses: forest/crypt/volcano).
+    // Every region holds at most one live boss; the timer restocks the
+    // highest empty zone. Interval tightens as the roster caps out
+    // (110s → ~33s all-max), and a max-majority town with no boss alive
+    // fast-tracks the next summon so capped parties get their hunt.
     this.bossSpawnTimer -= effectiveDt;
-    if (this.bossSpawnTimer <= 0 && !this.isBossActive) {
-      this.bossSpawnTimer = 110;
+    if (this.bossSpawnTimer <= 0) {
+      this.bossSpawnTimer = this.bossInterval();
       this.spawnBoss();
+    } else if (this.maxLevelFrac() >= 0.5 && !this.anyRegionBossAlive() && this.bossSpawnTimer > 15) {
+      this.bossSpawnTimer = 15;
     }
 
     // 2b. Dungeon lockout/clear: the gate re-opens when the timer expires
@@ -1008,12 +1022,50 @@ export class GameSimulation {
     this.evaluateDirector();
   }
 
+  /**
+   * Region bosses: one per field zone (forest Thornmother L5, crypt
+   * Revenant L10, volcano Lich L15). Spawns into the highest zone missing
+   * its boss (volcano first) so pressure tracks progression. No-op when
+   * all three regions already hold a boss. isBossActive mirrors "any
+   * region boss alive" for save-compat (dungeon bosses untouched).
+   */
+  private static readonly REGION_BOSS_BY_ZONE = {
+    1: 'boss_thorn',
+    2: 'boss_revenant',
+    3: 'boss_lich',
+  } as const;
+
+  /** Share of the live roster at the level cap (0 when town is empty). */
+  private maxLevelFrac(): number {
+    if (this.hunters.length === 0) return 0;
+    return this.hunters.filter(h => h.level >= HUNTER_LEVEL_CAP).length / this.hunters.length;
+  }
+
+  /** Current boss summon interval: 110s fresh → ~33s all-max. */
+  private bossInterval(): number {
+    return Math.max(30, Math.round(110 * (1 - 0.7 * this.maxLevelFrac())));
+  }
+
+  /** True when any field-zone (1-3) region boss is alive. */
+  private anyRegionBossAlive(): boolean {
+    const types = new Set<string>(Object.values(GameSimulation.REGION_BOSS_BY_ZONE));
+    return this.monsters.some(m => m.hp > 0 && types.has(m.type) && (m.zone === 1 || m.zone === 2 || m.zone === 3));
+  }
+
   private spawnBoss() {
-    this.isBossActive = true;
-    const boss = this.spawnMonster(3, 'boss_lich', true);
-    soundFx.playSmite();
-    this.addFloatingText('☠ EVIL LICH LORD HAS AWOKEN! ☠', boss.gx, boss.gy, '#ef4444', 18);
-    this.addLog('boss', 'A massive sinister aura emerges: The Evil Lich Lord has spawned in the Volcanic Crater!');
+    const order: (1 | 2 | 3)[] = [3, 2, 1];
+    const types = GameSimulation.REGION_BOSS_BY_ZONE;
+    for (const zone of order) {
+      const type = types[zone];
+      if (this.monsters.some(m => m.hp > 0 && m.type === type && m.zone === zone)) continue;
+      const boss = this.spawnMonster(zone, type, true);
+      this.isBossActive = true;
+      soundFx.playSmite();
+      const zoneName = zone === 3 ? 'Volcanic Crater' : zone === 2 ? 'Gloomy Graveyard' : 'Whispering Forest';
+      this.addFloatingText(`☠ ${boss.name.toUpperCase()} HAS AWOKEN! ☠`, boss.gx, boss.gy, '#ef4444', 18);
+      this.addLog('boss', `A massive sinister aura emerges: ${boss.name} has spawned in the ${zoneName}!`);
+      return;
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -2432,7 +2484,8 @@ export class GameSimulation {
 
   // --------------------------------------------------------------------------
   // Rarity loot rolls (Normal x1.0 / Uncommon x1.15 / Rare x1.35 / Epic x1.6).
-  // Bosses: 35% epic (smart loot 70% killer class). Normals: Uncommon 40%
+  // Bosses: 35% epic (smart loot 70% killer class), else a guaranteed Rare
+  // (blue) — every boss pays at least blue. Normals: Uncommon 40%
   // (wolf+), Rare 10% (ghoul/drake). Gray kills: no gear roll.
   // --------------------------------------------------------------------------
 
@@ -2517,7 +2570,13 @@ export class GameSimulation {
         const def = EPIC_DEFS[Math.floor(Math.random() * EPIC_DEFS.length)];
         return this.buildEpicGear(def, monster);
       }
-      if (Math.random() >= 0.35) return null;
+      if (Math.random() >= 0.35) {
+        // Consolation: every field boss guarantees at least a Rare (blue) —
+        // zone-tier stat gear for the killer's class (flows to the blue
+        // shelf when rejected, bought when an upgrade).
+        const slot = Math.random() < 0.6 ? 'weapon' : 'armor';
+        return this.buildStatGear(this.zoneGearTier(monster.zone), 'Rare', slot, killer.charClass, monster);
+      }
       // Smart loot: 70% killer-class pool (its weapon + all armors), else any epic.
       // (Dungeon bosses return above with a guaranteed random-class epic.)
       const classPool = EPIC_DEFS.filter(d => !d.reqClass || d.reqClass === killer.charClass);
@@ -2602,8 +2661,10 @@ export class GameSimulation {
         const tradeIn = Math.floor(dataGearSellPrice(old.tier, old.rarity ?? 'Common') / 2);
         if (tradeIn > 0) hunter.gold += tradeIn;
       } else if (dataIsAuctionable(old)) {
+        // Relist onto its own rarity shelf when room (never evicts here —
+        // the shelf check keeps greens from pushing blues out on trade-in).
         const copies = this.auctionStock.filter(s => dataAuctionItemKey(s) === dataAuctionItemKey(old)).length;
-        if (copies < DATA_AUCTION_MAX_COPIES_PER_ITEM && this.auctionStock.length < DATA_AUCTION_STOCK_CAP) {
+        if (copies < DATA_AUCTION_MAX_COPIES_PER_ITEM && dataAuctionShelfCount(this.auctionStock, old.rarity) < dataAuctionShelfCap(old.rarity)) {
           this.auctionStock.push(old);
         } else {
           const tradeIn = Math.floor(dataGearSellPrice(old.tier, old.rarity ?? 'Common') / 2);
@@ -2656,10 +2717,12 @@ export class GameSimulation {
       if (monster.zone === 4) {
         this.onDungeonBossDown(hunter, monster);
       } else {
-        this.isBossActive = false;
-        this.bossSpawnTimer = 90;
+        // Region boss down: restock on the (possibly max-scaled) interval
+        // and keep the flag mirroring live region bosses (dungeon excluded).
+        this.bossSpawnTimer = this.bossInterval();
+        this.isBossActive = this.anyRegionBossAlive();
         this.addFloatingText('🏆 BOSS SLAIN!', monster.gx, monster.gy, '#fbbf24', 18);
-        this.addLog('boss', `${hunter.name} defeated the Evil Lich Lord! The realm is temporarily purified.`, hunter.name);
+        this.addLog('boss', `${hunter.name} defeated ${monster.name}! The realm is temporarily purified.`, hunter.name);
       }
     }
 
@@ -3199,12 +3262,17 @@ export class GameSimulation {
               continue;
             }
             const buyout = dataAuctionBuyoutPrice(eq.tier, eq.rarity ?? 'Common', serviceBuilding.level);
-            if (this.auctionStock.length >= DATA_AUCTION_STOCK_CAP) {
-              const evicted = this.auctionStock.shift();
+            // Reserved shelves: a full green shelf evicts only its own
+            // oldest green — blues are never crowded out by green floods.
+            // Over-cap legacy saves self-heal (each listing evicts one).
+            if (dataAuctionShelfCount(this.auctionStock, eq.rarity) >= dataAuctionShelfCap(eq.rarity)) {
+              const idx = this.auctionStock.findIndex(s => (s.rarity ?? 'Common') === (eq.rarity ?? 'Common'));
+              const evicted = idx >= 0 ? this.auctionStock.splice(idx, 1)[0] : undefined;
               if (evicted) {
                 const salvage = dataGearSellPrice(evicted.tier, evicted.rarity ?? 'Common');
                 this.townGold += salvage;
-                this.addLog('trade', `Auction House full: oldest ${dataEquipmentDisplayName(evicted.rarity, evicted.name)} salvaged for ${salvage}g.`);
+                this.addFloatingText(`📦 ${(eq.rarity ?? 'Common') === 'Rare' ? 'Blue' : 'Green'} shelf full: oldest salvaged`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#94a3b8', 11);
+                this.addLog('trade', `Auction House ${(eq.rarity ?? 'Common') === 'Rare' ? 'blue' : 'green'} shelf full: oldest ${dataEquipmentDisplayName(evicted.rarity, evicted.name)} salvaged for ${salvage}g.`);
               }
             }
             this.auctionStock.push({ ...eq });
@@ -3852,6 +3920,22 @@ export class GameSimulation {
     return n;
   }
 
+  /**
+   * Max-level boss focus: true when the hunter is capped, or when at
+   * least half its live party (incl. self) is capped. Focused hunters
+   * treat field bosses as party prey — the endgame goal once EXP stops.
+   */
+  private bossFocusFor(hunter: Hunter): boolean {
+    if (hunter.level >= HUNTER_LEVEL_CAP) return true;
+    if (!this.agentConfig.partiesEnabled) return false;
+    const party = this.partyOf(hunter);
+    if (!party) return false;
+    const members = this.partyMembers(hunter);
+    const list = members.length > 0 ? members : [hunter];
+    const capped = list.filter(m => m.level >= HUNTER_LEVEL_CAP).length;
+    return capped * 2 >= list.length && list.length > 0;
+  }
+
   private findBestMonsterForHunter(hunter: Hunter, ignoreClaims = false): Monster | null {
     // Pick the best level-matched monster in the level-appropriate zone
     // (bands: forest 1-5, crypt 6-10, volcano 11-15; Lv11+ volcano, Lv6+
@@ -3864,9 +3948,14 @@ export class GameSimulation {
     // prey no longer ties with paying prey at equal level-match+distance,
     // the hunter now prefers prey that pays them (the gray-trap escape and
     // uphill transit utilities still handle the reverse direction).
+    // Max-level boss goal: capped hunters (or half-capped parties) subtract
+    // 14 for field bosses and halve the travel distance, so endgame groups
+    // raid live region bosses — even cross-zone — over gray volcano trash.
+    // Dungeon mobs stay teleport-only.
     let preferredZone: 1 | 2 | 3 = 1;
     if (hunter.level >= 11) preferredZone = 3;
     else if (hunter.level >= 6) preferredZone = 2;
+    const bossFocus = this.bossFocusFor(hunter);
 
     const nearestIn = (list: Monster[]): Monster | null => {
       let best: Monster | null = null;
@@ -3880,13 +3969,19 @@ export class GameSimulation {
         // unpenalized lens (ignoreClaims) skips this spread pressure.
         // EXP-alignment: -2.5 per live party member (incl. self) who earns
         // positive EXP from this kill pulls the party toward shared-pay prey.
+        // Boss-goal: -14 for field bosses under max-level focus, with
+        // travel halved (d*0.5) — the march is the quest, so capped
+        // groups raid live region bosses over grinding local gray trash.
         let claimants = 0;
         if (!ignoreClaims) {
           for (const h of this.hunters) {
             if (h.id !== hunter.id && h.targetMonsterId === m.id) claimants++;
           }
         }
-        const score = (Math.abs(m.level - hunter.level) * 3 + d) * (1 + 0.6 * claimants) - 2.5 * this.earningCountFor(m, hunter);
+        const isGoalBoss = bossFocus && m.isBoss && m.zone !== 4;
+        const bossPull = isGoalBoss ? 14 : 0;
+        const scoredD = isGoalBoss ? d * 0.5 : d;
+        const score = (Math.abs(m.level - hunter.level) * 3 + scoredD) * (1 + 0.6 * claimants) - 2.5 * this.earningCountFor(m, hunter) - bossPull;
         if (score < bestScore) {
           bestScore = score;
           best = m;
@@ -3897,6 +3992,18 @@ export class GameSimulation {
 
     const candidates = this.monsters.filter(m => m.zone === preferredZone && m.hp > 0);
     const fairInZone = candidates.filter(m => !this.isTooHardFor(m, hunter));
+    // Boss-goal cross-zone pull: focused hunters also weigh live field
+    // bosses anywhere (forest/crypt/volcano), so a capped volcano group
+    // detours for a Revenant/Thornmother instead of grinding gray trash.
+    if (bossFocus) {
+      const seen = new Set(fairInZone.map(m => m.id));
+      for (const m of this.monsters) {
+        if (m.hp <= 0 || !m.isBoss || m.zone === 4 || seen.has(m.id)) continue;
+        if (this.isTooHardFor(m, hunter)) continue;
+        seen.add(m.id);
+        fairInZone.push(m);
+      }
+    }
     if (fairInZone.length > 0) return nearestIn(fairInZone);
 
     // Fallback to the best-matched fair fight anywhere (refuse suicide runs).
@@ -4467,7 +4574,9 @@ export class GameSimulation {
         b.currentVisitors = [];
       }
       // If the boss flag survived without its boss, reset the timer
-      if (sim.isBossActive && !sim.monsters.some(m => m.isBoss)) {
+      // (region bosses only — dungeon bosses are instanced, not field).
+      const regionTypes = new Set<string>(Object.values(GameSimulation.REGION_BOSS_BY_ZONE));
+      if (sim.isBossActive && !sim.monsters.some(m => m.isBoss && regionTypes.has(m.type))) {
         sim.isBossActive = false;
         sim.bossSpawnTimer = 60;
       }
