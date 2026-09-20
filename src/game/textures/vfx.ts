@@ -179,18 +179,9 @@ export function createSkillVfxTexture(type: string): Texture {
     ctx.fillRect(center - 4, 24, 2, 2);
     ctx.fillRect(center + 3, 6, 2, 2);
   } else if (type === 'death') {
-    // Soul burst: pale escaping wisp over a fading ring. Renderer tints
-    // bosses via scale (longer duration), particles add the rising trail.
-    ctx.strokeStyle = 'rgba(196, 181, 253, 0.9)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(center, center + 4, 18, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(109, 107, 143, 0.7)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(center, center + 4, 24, 0, Math.PI * 2);
-    ctx.stroke();
+    // Soul wisp: strict squares only — no rings. The pooled spark trail
+    // in the effects layer carries the burst; this sprite is just the
+    // rising wisp core + fragments (lower = larger, fading upward).
     // Wisp core + rising fragments (lower = larger, fading upward)
     ctx.fillStyle = '#f5f3ff';
     ctx.fillRect(center - 3, center - 6, 6, 8);

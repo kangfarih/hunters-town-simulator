@@ -253,11 +253,12 @@ export class EffectsLayer {
         sprite.scale.set(s, 0.8 + progress * 0.8);
         sprite.alpha = fade * (0.8 + 0.2 * Math.sin(progress * 18));
       } else if (vfx.type === 'death') {
-        // Soul burst blooms where the monster fell, ring expanding as the
-        // wisp rises. Bosses pass a longer duration, which reads as bigger.
+        // Soul wisp rises where the monster fell — no ring, no bloom.
+        // Gentle pop only; the pooled spark trail carries the burst.
+        // Bosses pass a longer duration, which reads as bigger.
         sprite.x = targetScreen.x;
         sprite.y = targetScreen.y - 12 - progress * 14;
-        const s = 0.6 + pop * 1.1;
+        const s = 0.7 + pop * 0.35;
         sprite.scale.set(s);
       } else {
         // Impact burst blooms exactly on the target
