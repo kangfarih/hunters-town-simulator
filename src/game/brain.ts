@@ -1172,7 +1172,7 @@ export class HunterBrain {
           hunter.elixirs--;
           const heal = Math.round(this.sim.effectiveMaxHp(hunter) * 0.35);
           hunter.hp = Math.min(this.sim.effectiveMaxHp(hunter), hunter.hp + heal);
-          soundFx.playCoin();
+          soundFx.playCoin(hunter.gx, hunter.gy);
           this.sim.addFloatingText(`🧪 Elixir! +${heal} HP`, hunter.gx, hunter.gy - 0.5, '#4ade80', 12);
         }
 
