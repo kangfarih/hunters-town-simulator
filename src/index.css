@@ -1,1 +1,42 @@
 @import "tailwindcss";
+@import "@fontsource/press-start-2p";
+
+/* Midnight JRPG HUD: CSS mirror of src/game/palette.ts UI tokens. */
+:root {
+  --px-panel: #0d0b24;
+  --px-panel-soft: #151238;
+  --px-edge: #2a2560;
+  --px-border: #eab308;
+  --px-gold: #facc15;
+  --px-gold-pale: #fef08a;
+  --px-text: #e2e8f0;
+  --px-dim: #8b87b8;
+  --px-hp: #22c55e;
+  --px-danger: #ef4444;
+}
+
+html,
+body {
+  background: #090714;
+  image-rendering: pixelated;
+}
+
+.font-pixel {
+  font-family: "Press Start 2P", monospace;
+}
+
+/* Chunky pixel panel: flat fill + hard 2px gold border, square corners. */
+.px-panel {
+  background: var(--px-panel);
+  border: 2px solid var(--px-border);
+  box-shadow: 0 0 0 2px #090714, 4px 4px 0 0 rgba(0, 0, 0, 0.6);
+}
+
+.px-panel-soft {
+  background: var(--px-panel-soft);
+  border: 2px solid var(--px-edge);
+}
+
+.px-text-dim {
+  color: var(--px-dim);
+}

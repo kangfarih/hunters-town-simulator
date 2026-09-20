@@ -1,26 +1,20 @@
 // Square-pixel particle bases + quantized fire/smoke palettes.
-// Strict rule: fillRect only, no arcs / gradients. Tinting happens on the
-// sprite (white base texture), never by baking new textures per color.
+// Ramps are canonized in ../palette (VFX.*); these re-export them so
+// existing imports keep working. Strict rule: fillRect only, no arcs /
+// gradients. Tinting happens on the sprite (white base texture), never
+// by baking new textures per color.
 
 import { Texture } from 'pixi.js';
+import { VFX } from '../palette';
 import { createPixelCanvas } from '../objects/iso';
 
 /** White-hot -> ember. Indexed by lifeT (1 = just spawned). */
-export const FIRE_RAMP = [
-  '#ffffff',
-  '#fef08a',
-  '#fde047',
-  '#facc15',
-  '#fb923c',
-  '#f97316',
-  '#ea580c',
-  '#7c2d12',
-] as const;
+export const FIRE_RAMP = VFX.fire;
 
 /** Cool smoke. Indexed by lifeT (0 = about to die). */
-export const SMOKE_RAMP = ['#57534c', '#78716c', '#a8a29e', '#d6d3d1'] as const;
+export const SMOKE_RAMP = VFX.smoke;
 
-export const EMBER_COLORS = ['#facc15', '#fb923c', '#f97316', '#ef4444'] as const;
+export const EMBER_COLORS = VFX.ember;
 
 const baseCache = new Map<number, Texture>();
 
