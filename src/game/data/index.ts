@@ -9,6 +9,7 @@ export {
   clampAgentConfig,
   partyColor,
   difficultyMultipliers,
+  HUNTER_LEVEL_CAP,
 } from './tuning';
 export type { AgentConfig, Party } from './tuning';
 export {

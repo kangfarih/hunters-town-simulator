@@ -74,6 +74,11 @@ export function partyColor(partyId: string | null): string | null {
   return PARTY_COLOR_PALETTE[Math.abs(hash) % PARTY_COLOR_PALETTE.length];
 }
 
+// Hunter level cap (dungeon gate): gainExp banks nothing at/above this.
+// Lives here (not simulation) so the hunter brain module can use it
+// without a runtime import cycle back into simulation.
+export const HUNTER_LEVEL_CAP = 15;
+
 /** Spawn multipliers for a difficulty level 1-10 (5 = standard 1x). */
 export function difficultyMultipliers(level: number): { hp: number; atk: number; def: number; reward: number } {
   const lv = Number.isFinite(level) ? Math.max(1, Math.min(10, Math.round(level))) : 5;
