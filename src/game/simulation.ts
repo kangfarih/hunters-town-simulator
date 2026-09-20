@@ -95,6 +95,9 @@ const LEGACY_SAVE_KEY = 'evil-hunter-tycoon-save-v1';
 const SAVE_VERSION = 4;
 // Hunter level cap (dungeon gate): gainExp banks nothing at/above this.
 export const HUNTER_LEVEL_CAP = 15;
+// Abandon fail-safe: seconds a live run may have zero tracked delvers
+// inside the vault before the run is scrapped and the gate re-opens.
+export const DUNGEON_ABANDON_SECONDS = 60;
 // Grid shift applied when migrating pre-shift (v1) saves: every settled
 // coordinate moves +20/+20 as town relocated NW→center.
 const SAVE_SHIFT = 20;
@@ -239,6 +242,9 @@ export class GameSimulation {
   // Dungeon instance (phase 2): mobs live in the normal monsters array
   // tagged zone 4; only this header is tracked here.
   public dungeon: DungeonInstance = defaultDungeonInstance();
+  // Abandon fail-safe clock (runtime-only, never saved): accumulates
+  // while a live run has no tracked delver inside the vault.
+  private dungeonAbandonTimer: number = 0;
 
   constructor(skipSeed: boolean = false) {
     this.buildings = JSON.parse(JSON.stringify(INITIAL_BUILDINGS));
@@ -941,6 +947,42 @@ export class GameSimulation {
       }
     }
 
+    // 2c. Dungeon abandon fail-safe: the run is live but no tracked
+    // delver remains inside the vault (phased out through the sealed
+    // wall, warped, or otherwise gone) — and no wipe fired because
+    // everyone is alive. After N seconds with the vault empty of
+    // delvers, despawn the bosses and reopen the gate as dormant
+    // (abandon, not wipe: no lockout). Without this a stranded run
+    // sits `active` forever and soft-locks every hunter out.
+    if (this.dungeon.state === 'active') {
+      const ids = this.dungeon.partyIds ?? [];
+      const anyoneInside = ids.some(id => {
+        const h = this.hunters.find(hh => hh.id === id);
+        return h !== undefined && h.hp > 0 && this.zoneOf(h.gx, h.gy) === 4;
+      });
+      if (anyoneInside) {
+        this.dungeonAbandonTimer = 0;
+      } else {
+        this.dungeonAbandonTimer += effectiveDt;
+        if (this.dungeonAbandonTimer >= DUNGEON_ABANDON_SECONDS) {
+          this.dungeonAbandonTimer = 0;
+          for (let i = this.monsters.length - 1; i >= 0; i--) {
+            if (this.monsters[i].zone === 4) {
+              this.pathCache.delete(this.monsters[i].id);
+              this.monsters.splice(i, 1);
+            }
+          }
+          this.dungeon.partyIds = [];
+          this.dungeon.bossesDown = [false, false, false];
+          this.dungeon.state = 'dormant';
+          this.addLog('boss', 'The dungeon run was abandoned — its bosses melt back into the dark. The gate stands open.');
+          this.addFloatingText('🌀 Dungeon abandoned — gate open', DUNGEON_PORTAL.x, DUNGEON_PORTAL.y, '#c4b5fd', 13);
+        }
+      }
+    } else {
+      this.dungeonAbandonTimer = 0;
+    }
+
     // 2b. Field parties: OFF dissolves everything live; ON runs a
     // matching pass every ~3 sim-seconds.
     if (!this.agentConfig.partiesEnabled) {
@@ -1117,6 +1159,40 @@ export class GameSimulation {
   }
 
   /**
+   * Manual gate reset (World Config danger zone): empties the vault
+   * (despawns zone-4 mobs), ejects any occupants to the plaza, and
+   * reopens the gate as dormant — no lockout. For stuck `active` runs
+   * and for spectators who just want a fresh vault.
+   */
+  public resetDungeon(): void {
+    for (let i = this.monsters.length - 1; i >= 0; i--) {
+      if (this.monsters[i].zone === 4) {
+        this.pathCache.delete(this.monsters[i].id);
+        this.monsters.splice(i, 1);
+      }
+    }
+    for (const h of this.hunters) {
+      if (this.zoneOf(h.gx, h.gy) !== 4) continue;
+      h.gx = DUNGEON_EJECT.x;
+      h.gy = DUNGEON_EJECT.y;
+      h.targetGx = DUNGEON_EJECT.x;
+      h.targetGy = DUNGEON_EJECT.y;
+      h.targetMonsterId = null;
+      h.targetBuildingId = null;
+      h.state = 'WANDERING_TOWN';
+      h.stateTimer = 1.5;
+    }
+    this.dungeon.partyIds = [];
+    this.dungeon.bossesDown = [false, false, false];
+    this.dungeon.state = 'dormant';
+    this.dungeon.lockoutTimer = 0;
+    this.dungeonAbandonTimer = 0;
+    this.addLog('boss', 'The spectator turns the dungeon key — the vault empties and the gate stands open.');
+    this.addFloatingText('🌀 Dungeon reset — gate open', DUNGEON_PORTAL.x, DUNGEON_PORTAL.y, '#c4b5fd', 13);
+    this.saveToLocalStorage();
+  }
+
+  /**
    * Dungeon portal hook (wired — one-line call from the town-hub leave
    * path in evaluateTownNeeds): an idle max-level hunter with nothing
    * better to do gathers at the town portal instead of the field while
@@ -1222,6 +1298,35 @@ export class GameSimulation {
       h.state = 'HUNTING';
     });
     this.addFloatingText('🌀 The party descends!', DUNGEON_STAGING.x, DUNGEON_STAGING.y, '#c4b5fd', 16);
+  }
+
+  /**
+   * Delver hold (dungeon fix): a tracked delver standing in the vault
+   * while its run is live never takes errands — boss loot rides in bags
+   * until extraction. Retargets the nearest live zone-4 boss and holds
+   * HUNTING. Returns true when it held (caller breaks for the tick).
+   * Wired into FIGHTING post-kill and HUNTING no-target routing: without
+   * it the first boss's loot triggers sell/forge trips that phase through
+   * the sealed wall, stranding the run at 1/3 with the gate `active`
+   * forever (teleport-only entry, no way back in).
+   */
+  private holdDelverInVault(hunter: Hunter): boolean {
+    if (this.dungeon.state !== 'active') return false;
+    if (!(this.dungeon.partyIds ?? []).includes(hunter.id)) return false;
+    if (this.zoneOf(hunter.gx, hunter.gy) !== 4) return false;
+    let best: Monster | null = null;
+    let bestDist = Infinity;
+    for (const mob of this.monsters) {
+      if (mob.hp <= 0 || mob.zone !== 4) continue;
+      const d = gridDistance(hunter.gx, hunter.gy, mob.gx, mob.gy);
+      if (d < bestDist) { bestDist = d; best = mob; }
+    }
+    if (!best) return false;
+    hunter.targetMonsterId = best.id;
+    hunter.targetGx = best.gx;
+    hunter.targetGy = best.gy;
+    hunter.state = 'HUNTING';
+    return true;
   }
 
   /**
@@ -1482,6 +1587,11 @@ export class GameSimulation {
           // Find next monster
           monster = this.findBestMonsterForHunter(hunter);
           if (!monster) {
+            // Delver hold: mid-run delvers stay on interior bosses even
+            // when the fair-fight search comes up empty — leaving strands
+            // the run, while staying either clears it or wipes into the
+            // designed lockout reset (checkDungeonWipe).
+            if (this.holdDelverInVault(hunter)) break;
             // Everything left alive is too dangerous: gear up if possible,
             // otherwise take the least-bad fight instead of pacing forever
             if (this.onlyHardTargetsRemain(hunter) && this.canImproveInTown(hunter)) {
@@ -1517,6 +1627,9 @@ export class GameSimulation {
         const monster = this.monsters.find(m => m.id === hunter.targetMonsterId);
         if (!monster || monster.hp <= 0) {
           hunter.targetMonsterId = null;
+          // Delver hold: boss loot never triggers errands mid-run — the
+          // party stays on interior bosses until clear/extraction.
+          if (this.holdDelverInVault(hunter)) break;
           // Post-kill utility routing: needs must outscore the hunt
           // (cfg.huntBaseline) to earn the interruption. Lab/forge/clinic never interrupt the
           // field (restock via town trips; clinic-critical is the HP<20%
@@ -4392,6 +4505,20 @@ export class GameSimulation {
 
       // Restore monsters, migrating older saves and clamping roamers home
       sim.monsters = Array.isArray(data.monsters) ? data.monsters : [];
+      // Dungeon trash purge: the vault is bosses-only since the trash-pack
+      // removal — but older saves still carry zone-4 trash, and nothing in
+      // the live game can clear it (outsiders can't target zone 4,
+      // repopulation ignores it, wipe/abandon only fire mid-run). It would
+      // roam the depths forever, so crumble it on load; bosses restock on
+      // the next descent.
+      {
+        const before = sim.monsters.length;
+        sim.monsters = sim.monsters.filter(m => m.zone !== 4 || m.isBoss === true);
+        const purged = before - sim.monsters.length;
+        if (purged > 0) {
+          sim.addLog('boss', `The depths settle: ${purged} leftover dungeon trash crumble${purged === 1 ? 's' : ''} to dust (the vault holds bosses only).`);
+        }
+      }
       if (needsShift) {
         for (const m of sim.monsters) {
           if (typeof m.gx === 'number' && Number.isFinite(m.gx)) m.gx += SAVE_SHIFT;
