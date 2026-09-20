@@ -51,6 +51,7 @@ export const WOOD = {
 export const METAL = {
   dark: '#334155',
   mid: '#475569',
+  steel: '#64748b',
   light: '#7c8aa0',
   pale: '#94a3b8',
   iron: '#374151',
@@ -95,8 +96,28 @@ export const MONSTER = {
   goldEye: '#fde047',
   emberEye: '#facc15',
   wisp: '#06b6d4',
+  trail: '#818cf8',
   spectral: '#e0e7ff',
   bone: '#e2e8f0',
+  void: '#a855f7',
+} as const;
+
+/** Per-beast body colors (identity, not shared). */
+export const BEAST = {
+  slimeBody: '#22c55e',
+  slimeHi: '#86efac',
+  goblinBody: '#65a30d',
+  goblinDark: '#4d7c0f',
+  drakeBody: '#c2410c',
+  drakeHorn: '#f59e0b',
+  drakeWing: '#7c2d12',
+} as const;
+
+/** Cold stone for golems and blades. */
+export const STONE = {
+  dark: '#1c1917',
+  mid: '#292524',
+  light: '#44403c',
 } as const;
 
 /** Quantized VFX ramps (hot at birth unless noted). */
