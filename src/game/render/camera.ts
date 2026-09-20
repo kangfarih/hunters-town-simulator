@@ -4,7 +4,7 @@
 // every layer renders in the same frame of reference.
 
 import type { Application, Container } from 'pixi.js';
-import { gridToScreen } from '../isometric';
+import { gridToScreen, screenToGrid, type GridPoint } from '../isometric';
 import type { GameSimulation } from '../simulation';
 
 export interface CameraState {
@@ -140,4 +140,15 @@ export function jumpCameraTo(
   const screenPos = gridToScreen(gx, gy);
   cam.x = (app.screen.width / 2) - screenPos.x * cam.zoom;
   cam.y = (app.screen.height / 2) - screenPos.y * cam.zoom;
+}
+
+/**
+ * Audio ear: grid position under the screen center. Inverse of
+ * centerCameraOn/jumpCameraTo — world = (screen/2 - cam)/zoom, then iso unproject.
+ */
+export function getCameraFocusGrid(cam: CameraState, screenW: number, screenH: number): GridPoint {
+  const zoom = cam.zoom || 1;
+  const worldX = (screenW / 2 - cam.x) / zoom;
+  const worldY = (screenH / 2 - cam.y) / zoom;
+  return screenToGrid(worldX, worldY);
 }

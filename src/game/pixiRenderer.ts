@@ -19,8 +19,9 @@ import { GameSimulation } from './simulation';
 import { Hunter, Building } from '../types';
 import {
   createCamera, centerCameraOn, updateCameraFollow, attachCameraInput,
-  jumpCameraTo, type CameraState,
+  getCameraFocusGrid, jumpCameraTo, type CameraState,
 } from './render/camera';
+import { soundFx } from './audioSynth';
 import { TerrainLayer } from './render/terrain';
 import { BuildingsLayer } from './render/buildings';
 import { HuntersLayer } from './render/hunters';
@@ -143,6 +144,12 @@ export class PixiRenderer {
     // (covers StrictMode remounts and resizes during boot).
     if (!this.cam.anchored && this.app.screen.width > 0 && this.app.screen.height > 0) {
       this.centerCameraOnTown();
+    }
+    // Sync audio ear before simulation emits sounds this tick, so distance
+    // fade/pan matches the current view (1-frame lag max on follow lerp).
+    if (this.app.screen.width > 0 && this.app.screen.height > 0) {
+      const focus = getCameraFocusGrid(this.cam, this.app.screen.width, this.app.screen.height);
+      soundFx.setListener(focus.gx, focus.gy);
     }
     const dt = ticker.deltaTime / 60;
     this.simulation.update(dt);

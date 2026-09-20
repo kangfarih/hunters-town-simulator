@@ -1766,7 +1766,7 @@ export class GameSimulation {
           hunter.elixirs--;
           const heal = Math.round(this.effectiveMaxHp(hunter) * 0.35);
           hunter.hp = Math.min(this.effectiveMaxHp(hunter), hunter.hp + heal);
-          soundFx.playCoin();
+          soundFx.playCoin(hunter.gx, hunter.gy);
           this.addFloatingText(`🧪 Elixir! +${heal} HP`, hunter.gx, hunter.gy - 0.5, '#4ade80', 12);
         }
 
@@ -2229,12 +2229,12 @@ export class GameSimulation {
       color: '#38bdf8',
     });
     const fx = skill.effectType;
-    if (fx === 'meteor') soundFx.playMagic();
-    else if (fx === 'smite') soundFx.playSmite();
-    else if (fx === 'multishot') soundFx.playArrow();
-    else if (fx === 'ballad' || fx === 'encore') soundFx.playLute();
-    else if (fx === 'heal' || fx === 'holy_burst') soundFx.playHeal();
-    else soundFx.playSlash();
+    if (fx === 'meteor') soundFx.playMagic(x, y);
+    else if (fx === 'smite') soundFx.playSmite(x, y);
+    else if (fx === 'multishot') soundFx.playArrow(x, y);
+    else if (fx === 'ballad' || fx === 'encore') soundFx.playLute(x, y);
+    else if (fx === 'heal' || fx === 'holy_burst') soundFx.playHeal(x, y);
+    else soundFx.playSlash(x, y);
 
     // Consecrated Aura taunts on cast (Paladin tank pattern, 4s < 11s CD).
     if (kind === 'consecration') this.tauntMonsters(hunter, 4, skill.name);
@@ -2243,7 +2243,7 @@ export class GameSimulation {
   /** Tick all zones: expiry, aura re-anchor, 1s damage/heal ticks. */
   private updateZones(dt: number) {
     if (this.activeZones.length === 0) return;
-    const tickedKinds = new Set<ZoneKind>();
+    const tickedKinds = new Map<ZoneKind, { x: number; y: number }>();
     for (let i = this.activeZones.length - 1; i >= 0; i--) {
       const z = this.activeZones[i];
       z.elapsed += dt;
@@ -2271,13 +2271,13 @@ export class GameSimulation {
       // boundaries — drain the accumulator instead of dropping ticks.
       while (z.tickTimer >= 1) {
         z.tickTimer -= 1;
-        if (this.tickZone(z)) tickedKinds.add(z.kind);
+        if (this.tickZone(z) && !tickedKinds.has(z.kind)) tickedKinds.set(z.kind, { x: z.x, y: z.y });
         // tickZone removes the zone when its source is gone — stop ticking it.
         if (!this.activeZones.includes(z)) break;
       }
     }
-    // One quiet blip per ticking kind per global tick.
-    for (const kind of tickedKinds) soundFx.playZoneTick(kind);
+    // One quiet positional blip per ticking kind (nearest ticking zone anchors it).
+    for (const [kind, pos] of tickedKinds) soundFx.playZoneTick(kind, pos.x, pos.y);
   }
 
   /**
@@ -2424,7 +2424,7 @@ export class GameSimulation {
           elapsed: 0,
           color: '#facc15'
         });
-        soundFx.playHeal();
+        soundFx.playHeal(hunter.gx, hunter.gy);
         this.addFloatingText(`⚡ ${t3.name}!`, hunter.gx, hunter.gy - 0.5, '#38bdf8', 11);
         return;
       }
@@ -2455,7 +2455,7 @@ export class GameSimulation {
           elapsed: 0,
           color: '#4ade80'
         });
-        soundFx.playHeal();
+        soundFx.playHeal(target.gx, target.gy);
         return;
       }
       // No hurt ally in range: fall through to the normal (weak) attack path.
@@ -2577,12 +2577,12 @@ export class GameSimulation {
         });
       }
 
-      // Play matching audio
-      if (readySkill.effectType === 'meteor') soundFx.playMagic();
-      else if (readySkill.effectType === 'smite') soundFx.playSmite();
-      else if (readySkill.effectType === 'multishot') soundFx.playArrow();
-      else if (readySkill.effectType === 'ballad' || readySkill.effectType === 'encore') soundFx.playLute();
-      else soundFx.playSlash();
+      // Play matching audio at the caster (continuous distance fade, not on/off)
+      if (readySkill.effectType === 'meteor') soundFx.playMagic(hunter.gx, hunter.gy);
+      else if (readySkill.effectType === 'smite') soundFx.playSmite(hunter.gx, hunter.gy);
+      else if (readySkill.effectType === 'multishot') soundFx.playArrow(hunter.gx, hunter.gy);
+      else if (readySkill.effectType === 'ballad' || readySkill.effectType === 'encore') soundFx.playLute(hunter.gx, hunter.gy);
+      else soundFx.playSlash(hunter.gx, hunter.gy);
 
       this.addFloatingText(`⚡ ${readySkill.name}!`, hunter.gx, hunter.gy - 0.5, '#38bdf8', 11);
 
@@ -2623,10 +2623,12 @@ export class GameSimulation {
           color: rangedVfx === 'meteor' ? '#ea580c' : rangedVfx === 'smite' ? '#facc15' : rangedVfx === 'ballad' ? '#2dd4bf' : '#38bdf8',
         });
       }
-      if (hunter.charClass === 'Ranger') soundFx.playArrow();
-      else if (hunter.charClass === 'Sorcerer') soundFx.playMagic();
-      else if (hunter.charClass === 'Bard') soundFx.playLute();
-      else soundFx.playSlash();
+      const midGx = (hunter.gx + monster.gx) / 2;
+      const midGy = (hunter.gy + monster.gy) / 2;
+      if (hunter.charClass === 'Ranger') soundFx.playArrow(midGx, midGy);
+      else if (hunter.charClass === 'Sorcerer') soundFx.playMagic(midGx, midGy);
+      else if (hunter.charClass === 'Bard') soundFx.playLute(midGx, midGy);
+      else soundFx.playSlash(midGx, midGy);
     }
 
     if (isCrit) {
@@ -3522,7 +3524,7 @@ export class GameSimulation {
                 hunter.weapon.name = `${this.getEquipmentPrefix(hunter.weapon.tier)} ${hunter.charClass} Weapon`;
               }
 
-              soundFx.playSlash();
+              soundFx.playSlash(serviceBuilding.doorGx, serviceBuilding.doorGy);
               this.addFloatingText(`🔨 Bought Tier ${hunter.weapon.tier} weapon`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
               this.addLog('upgrade', `${hunter.name} bought a Tier ${hunter.weapon.tier} weapon from the ${serviceBuilding.name}!`, hunter.name);
 
@@ -3546,7 +3548,7 @@ export class GameSimulation {
                 hunter.armor.name = `${this.getEquipmentPrefix(hunter.armor.tier)} ${hunter.charClass} Armor`;
               }
 
-              soundFx.playSlash();
+              soundFx.playSlash(serviceBuilding.doorGx, serviceBuilding.doorGy);
               this.addFloatingText(`🔨 Bought Tier ${hunter.armor.tier} armor`, serviceBuilding.doorGx, serviceBuilding.doorGy - 0.5, '#38bdf8', 14);
               this.addLog('upgrade', `${hunter.name} bought a Tier ${hunter.armor.tier} armor from the ${serviceBuilding.name}!`, hunter.name);
 
